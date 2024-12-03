@@ -1,0 +1,3 @@
+[submodule "ext/efficient-evolution"]
+	path = ext/efficient-evolution
+	url = git@github.com:brianhie/efficient-evolution.git
