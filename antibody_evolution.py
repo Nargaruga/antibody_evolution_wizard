@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 from enum import IntEnum, auto
 import threading
@@ -5,13 +7,11 @@ import subprocess
 from pathlib import Path
 from dataclasses import dataclass
 
+
 from pymol.wizard import Wizard
 from pymol import cmd
 
 import yaml
-
-from efficient_evolution.amis import reconstruct_multi_models
-
 
 # Map single letter amino acid codes to three letter codes
 RESIDUE_NAME_MAPPING = {
@@ -69,6 +69,21 @@ class Mutation:
     def to_string(self):
         """Get a string representation of the mutation."""
         return f"{self.start_residue.chain}/{one_to_three(self.start_residue.name)}{self.start_residue.id}->{one_to_three(self.target)}"
+
+    @staticmethod
+    def from_EE_output(line: str, molecule, chain: str) -> Mutation:
+        # Efficient Evolution outputs strings in the form
+        # [start residue name][start residue id][target residue name] [occurrences]
+        # example: E1M 2
+        mut_str, count = line.split()
+        start_resn, start_resi, target = list(mut_str)
+
+        return Mutation(
+            molecule,
+            Residue(molecule, start_resn, int(start_resi), chain),
+            target,
+            int(count),
+        )
 
 
 class WizardState(IntEnum):
@@ -224,25 +239,51 @@ class Antibody_evolution(Wizard):
             print("Please select a molecule.")
             return
 
+        if self.chain is None:
+            print("Please select a chain.")
+            return
+
         sequence = ""
         for residue in residues:
             sequence += residue.name
 
         print(f"Running inference with models {self.models}")
-        mutations_models = reconstruct_multi_models(
-            sequence,
-            self.models,
-        )
-        suggestions = []
+        try:
+            res = subprocess.run(
+                [
+                    "conda",
+                    "run",
+                    "-n",
+                    "efficient-evolution",
+                    "recommend",
+                    sequence,
+                    "--model-names",
+                    " ".join(self.models),
+                ],
+                check=True,
+                capture_output=True,
+                text=True
+            )
+        except subprocess.CalledProcessError as e:
+            print(f"Something went wrong while calling Efficient Evolution: {e}")
+            return
 
-        # Mutations k are in the form (before_idx, before_name, after_name)
-        for k, v in sorted(mutations_models.items(), key=lambda item: -item[1]):
-            suggestions.append(Mutation(self.molecule, residues[k[0]], k[2], v))
+        mutations = self.parse_EE_output(res.stdout)
+        self.populate_mutation_choices(mutations)
 
-        self.populate_mutation_choices(suggestions)
+        print("Select a mutation.")
 
         self.status = WizardState.SUGGESTIONS_GENERATED
         cmd.refresh_wizard()
+
+    def parse_EE_output(self, output: str) -> list[str]:
+        """Parse the output of Efficient Evolution to get the binding affinity."""
+
+        mutations = []
+        for line in output.strip().split("\\n"):
+            mutations.append(Mutation.from_EE_output(line, self.molecule, self.chain))
+
+        return mutations
 
     def populate_mutation_choices(self, suggestions):
         """Populate the menu with the generated mutation suggestions."""

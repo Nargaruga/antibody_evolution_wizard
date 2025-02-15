@@ -22,7 +22,7 @@ def get_env_file(prefix):
 def install_openvr(clone_dir, conda_base_path, env_name):
     """Clone, build and install OpenVR."""
 
-    print("Installing OpenVR...")
+    print(f"Installing OpenVR in {env_name}...")
 
     env_dir = os.path.join(conda_base_path, "envs", env_name)
 
@@ -133,7 +133,7 @@ def install_pymol(clone_dir, conda_base_path, env_name):
     install_openvr(clone_dir, conda_base_path, env_name)
 
     if not os.path.exists(os.path.join(clone_dir, "pymol-open-source")):
-        print("Installing PyMOL...")
+        print(f"Installing PyMOL in {env_name}...")
         subprocess.run(
             [
                 "git",
@@ -151,6 +151,20 @@ def install_pymol(clone_dir, conda_base_path, env_name):
         shell=True,
         check=True,
     )
+
+def create_EE_env():
+    efficient_evolution_env = os.path.join(wizard_root, "ext", "efficient-evolution", "environment.yml")
+    try:
+        subprocess.run(
+            f"conda env create -f {efficient_evolution_env}",
+            check=True,
+            shell=True,
+        )
+    except subprocess.CalledProcessError as e:
+        print(
+            f"Something went wrong while creating the environment for Efficient Evolution: {e}"
+        )
+        print("You might have to create it manually.")
 
 
 def add_line_after(file, to_insert, pattern_to_insert, target_pattern):
@@ -311,6 +325,9 @@ if not os.path.exists(pymol_dir):
         except subprocess.CalledProcessError as e:
             print(f"Failed to install PyMOL: {e}")
             exit(1)
+    else:
+        print("Please install PyMOL to continue.")
+        exit(0)
 
 print("Copying files...")
 installed_wizard_dir = os.path.join(pymol_dir, "wizard")
