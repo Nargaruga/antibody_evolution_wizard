@@ -51,11 +51,10 @@ class Residue:
     name: str
     id: int
     chain: str
-    segment: str
 
     def get_selection_str(self):
         """Get the PyMOL selection string for the residue."""
-        return f"{self.molecule} and resi {self.id} and chain {self.chain} and segi {self.segment}"
+        return f"{self.molecule} and resi {self.id} and chain {self.chain}"
 
 
 @dataclass
@@ -69,7 +68,7 @@ class Mutation:
 
     def to_string(self):
         """Get a string representation of the mutation."""
-        return f"{self.start_residue.segment}/{self.start_residue.chain}/{one_to_three(self.start_residue.name)}{self.start_residue.id}->{one_to_three(self.target)}"
+        return f"{self.start_residue.chain}/{one_to_three(self.start_residue.name)}{self.start_residue.id}->{one_to_three(self.target)}"
 
 
 class WizardState(IntEnum):
@@ -197,9 +196,9 @@ class Antibody_evolution(Wizard):
 
         residues = []
 
-        def record_residue(molecule, oneletter, resi, chain, segi):
+        def record_residue(molecule, oneletter, resi, chain):
             """Record all the necessary information for each residue in the molecule."""
-            residues.append(Residue(molecule, oneletter, resi, chain, segi))
+            residues.append(Residue(molecule, oneletter, resi, chain))
 
         context = {
             "record_residue": record_residue,
@@ -207,7 +206,7 @@ class Antibody_evolution(Wizard):
         }
         cmd.iterate(
             f"{self.molecule} and chain {self.chain} and name CA",
-            "record_residue(molecule,oneletter,resi,chain,segi)",
+            "record_residue(molecule,oneletter,resi,chain)",
             space=context,
         )
 
@@ -288,7 +287,6 @@ class Antibody_evolution(Wizard):
 
     def parse_prodigy_output(self, output):
         """Parse the output of Prodigy to get the binding affinity."""
-        print(output)
 
         if output is None or len(output.split()) != 2:
             print("Error: could not parse Prodigy output.")
@@ -306,9 +304,8 @@ class Antibody_evolution(Wizard):
         cmd.wizard("mutagenesis")
         cmd.do("refresh_wizard")
         cmd.get_wizard().set_mode("%s" % one_to_three(self.selected_mutation.target))
-        selection = "/%s/%s/%s/%s" % (
+        selection = "/%s/%s/%s" % (
             self.molecule,
-            self.selected_mutation.start_residue.segment,
             self.selected_mutation.start_residue.chain,
             self.selected_mutation.start_residue.id,
         )
