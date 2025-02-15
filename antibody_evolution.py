@@ -268,6 +268,12 @@ class Antibody_evolution(Wizard):
         cmd.refresh_wizard()
         cmd.deselect()
 
+    def highlight_mutations(self):
+        for mutation_str, mutation in self.mutations.items():
+            r = mutation.start_residue
+            cmd.color("cyan", f"{self.molecule} and resi {r.id} and chain {r.chain}")
+            cmd.label(f"{r.get_selection_str()} and name CA", f'"{mutation_str}"')
+
     def run(self):
         """Run the wizard to generate suggestions for the selected molecule."""
 
@@ -333,6 +339,7 @@ class Antibody_evolution(Wizard):
 
         mutations = self.parse_EE_output(res.stdout)
         self.populate_mutation_choices(mutations)
+        self.highlight_mutations()
 
         print("Select a mutation.")
 
