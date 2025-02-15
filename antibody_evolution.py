@@ -9,6 +9,7 @@ from dataclasses import dataclass
 
 
 from pymol.wizard import Wizard
+from pymol.wizarding import WizardError
 from pymol import cmd
 
 import yaml
@@ -51,6 +52,14 @@ class Residue:
     name: str
     id: int
     chain: str
+
+    def __eq__(self, other):
+        return (
+            self.molecule == str(other.molecule)
+            and self.name == str(other.name)
+            and self.id == int(other.id)
+            and self.chain == str(other.chain)
+        )
 
     def get_selection_str(self):
         """Get the PyMOL selection string for the residue."""
@@ -202,6 +211,63 @@ class Antibody_evolution(Wizard):
         self.status = WizardState.CHAIN_SELECTED
         cmd.refresh_wizard()
 
+    def do_pick(self, bondFlag):
+        """
+        React to the user clicking on the molecule.
+        :param bondFlag: True if a bond is selected
+        """
+        if bondFlag:
+            self._error = "Please select an atom and not a bond."
+            print(self._error)
+        else:
+            self.do_select("byres pk1")
+
+        cmd.refresh_wizard()
+
+    def find_mutation_for(self, sel: str):
+        residues = []
+
+        context = {
+            "molecule": self.molecule,
+            "residues": residues,
+            "Residue": Residue,
+        }
+        cmd.iterate(
+            f"{sel} and name CA",
+            "residues.append(Residue(molecule,oneletter,resi,chain))",
+            space=context,
+        )
+
+        print(residues)
+        residue = residues[0]
+        for mutation_str, mutation in self.mutations.items():
+            if mutation.start_residue == residue:
+                self.set_mutation(mutation_str)
+                return
+
+    def do_select(self, name: str):
+        """
+        Select a residue for mutation.
+
+        :param selection: A PyMOL selection
+        :type selection: string
+        """
+
+        cmd.select("tmp", name)
+        cmd.unpick()
+        try:
+            mutation = self.find_mutation_for(name)
+            if mutation is None:
+                return
+
+            self.set_mutation(mutation)
+        except WizardError as e:
+            print(e)
+
+        cmd.delete(name)
+        cmd.refresh_wizard()
+        cmd.deselect()
+
     def run(self):
         """Run the wizard to generate suggestions for the selected molecule."""
 
@@ -211,17 +277,14 @@ class Antibody_evolution(Wizard):
 
         residues = []
 
-        def record_residue(molecule, oneletter, resi, chain):
-            """Record all the necessary information for each residue in the molecule."""
-            residues.append(Residue(molecule, oneletter, resi, chain))
-
         context = {
-            "record_residue": record_residue,
             "molecule": self.molecule,
+            "residues": residues,
+            "Residue": Residue,
         }
         cmd.iterate(
             f"{self.molecule} and chain {self.chain} and name CA",
-            "record_residue(molecule,oneletter,resi,chain)",
+            "residues.append(Residue(molecule,oneletter,resi,chain))",
             space=context,
         )
 
@@ -262,7 +325,7 @@ class Antibody_evolution(Wizard):
                 ],
                 check=True,
                 capture_output=True,
-                text=True
+                text=True,
             )
         except subprocess.CalledProcessError as e:
             print(f"Something went wrong while calling Efficient Evolution: {e}")
@@ -276,7 +339,7 @@ class Antibody_evolution(Wizard):
         self.status = WizardState.SUGGESTIONS_GENERATED
         cmd.refresh_wizard()
 
-    def parse_EE_output(self, output: str) -> list[str]:
+    def parse_EE_output(self, output: str) -> list[Mutation]:
         """Parse the output of Efficient Evolution to get the binding affinity."""
 
         mutations = []
