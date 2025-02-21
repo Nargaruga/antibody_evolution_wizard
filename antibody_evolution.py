@@ -85,7 +85,9 @@ class Mutation:
         # [start residue name][start residue id][target residue name] [occurrences]
         # example: E1M 2
         mut_str, count = line.split()
-        start_resn, start_resi, target = list(mut_str)
+        start_resn = mut_str[0]
+        start_resi = mut_str[1:-1]
+        target = mut_str[-1]
 
         return Mutation(
             molecule,
