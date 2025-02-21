@@ -97,6 +97,14 @@ class Mutation:
         )
 
 
+@dataclass
+class HistoryEntry:
+    """An entry in the history of the wizard."""
+
+    binding_affinity: float
+    mutations: list[Mutation]
+
+
 class WizardState(IntEnum):
     """The possible states of the wizard."""
 
@@ -122,6 +130,8 @@ class Antibody_evolution(Wizard):
         self.mutations = {}
         self.selected_mutation = None
         self.binding_affinity = 0.0
+        self.history: list[HistoryEntry] = [HistoryEntry(0.0, [])]
+        self.last_frame = 0
         self.populate_molecule_choices()
 
         # Load the model in a separate thread
@@ -231,7 +241,7 @@ class Antibody_evolution(Wizard):
         for mutation_str, mutation in self.mutations.items():
             if mutation.start_residue == residue:
                 return mutation_str
-            
+
         return None
 
     def do_select(self, name: str):
@@ -252,12 +262,41 @@ class Antibody_evolution(Wizard):
 
         cmd.delete(name)
 
-
     def highlight_mutations(self):
         for mutation_str, mutation in self.mutations.items():
             r = mutation.start_residue
             cmd.color("cyan", f"{self.molecule} and resi {r.id} and chain {r.chain}")
             cmd.label(f"{r.get_selection_str()} and name CA", f'"{mutation_str}"')
+
+    def record_history(self):
+        self.history.append(
+            HistoryEntry(self.binding_affinity, list(self.mutations.values()))
+        )
+        print(f"Recorded history entry {len(self.history)}.")
+
+    def update_history(self):
+        if len(self.history) > 0:
+            current_state = cmd.get_state()
+            print(
+                f"Current state: {current_state}, history length: {len(self.history)}"
+            )
+            self.history[current_state - 1].binding_affinity = self.binding_affinity
+            self.history[current_state - 1].mutations = list(self.mutations.values())
+            print(f"Updated history entry {len(self.history)}.")
+
+    def undo(self):
+        if len(self.history) > 1:
+            self.history.pop()
+            self.binding_affinity = self.history[-1].binding_affinity
+            self.mutations = {
+                mut.to_string(): mut for mut in self.history[-1].mutations
+            }
+            self.selected_mutation = None
+            print(self.molecule)
+            cmd.delete_states(self.molecule, f"{cmd.count_states(self.molecule)}")
+            self.populate_mutation_choices(list(self.mutations.values()))
+            self.highlight_mutations()
+            print("Undid last mutation")
 
     def run(self):
         """Run the wizard to generate suggestions for the selected molecule."""
@@ -326,6 +365,8 @@ class Antibody_evolution(Wizard):
         self.populate_mutation_choices(mutations)
         self.highlight_mutations()
 
+        self.update_history()
+
         print("Select a mutation.")
 
         self.status = WizardState.SUGGESTIONS_GENERATED
@@ -379,6 +420,8 @@ class Antibody_evolution(Wizard):
 
         os.remove(f"{self.molecule}.pdb")
 
+        self.update_history()
+
         cmd.refresh_wizard()
 
     def parse_prodigy_output(self, output):
@@ -400,16 +443,20 @@ class Antibody_evolution(Wizard):
         cmd.wizard("mutagenesis")
         cmd.do("refresh_wizard")
         cmd.get_wizard().set_mode("%s" % one_to_three(self.selected_mutation.target))
-        # selection = "/%s/%s/%s" % (
-        #     self.molecule,
-        #     self.selected_mutation.start_residue.chain,
-        #     self.selected_mutation.start_residue.id,
-        # )
-        # cmd.select("sele", selection)
-        cmd.get_wizard().do_select("to_mutate")
+
+        cmd.create("last_state", self.molecule, source_state=-1, target_state=-1)
+        cmd.select(
+            "tmp",
+            f"last_state and resi {self.selected_mutation.start_residue.id} and chain {self.selected_mutation.start_residue.chain}",
+        )
+        cmd.get_wizard().do_select("tmp")
         cmd.frame(str(1))
         cmd.get_wizard().apply()
+        cmd.join_states(self.molecule, "last_state", mode=-1)
+        cmd.delete("last_state")
         cmd.set_wizard()
+
+        cmd.frame(str(cmd.count_states(self.molecule)))
 
         print(f"Applied mutation {self.selected_mutation.to_string()}.")
 
@@ -417,6 +464,11 @@ class Antibody_evolution(Wizard):
         del self.mutations[self.selected_mutation.to_string()]
         self.selected_mutation = None
         self.populate_mutation_choices(list(self.mutations.values()))
+
+        cmd.label(f"{self.molecule}", "''")
+        self.highlight_mutations()
+        self.record_history()
+        self.evaluate_binding_affinity()
 
         self.status = WizardState.MUTATION_APPLIED
         cmd.refresh_wizard()
@@ -471,6 +523,11 @@ class Antibody_evolution(Wizard):
         if self.status >= WizardState.MUTATION_SELECTED:
             options.append(
                 [2, "Apply Mutation", "cmd.get_wizard().apply_mutation()"],
+            )
+
+        if len(self.history) > 1:
+            options.append(
+                [2, "Undo", "cmd.get_wizard().undo()"],
             )
 
         options.append([2, "Dismiss", "cmd.set_wizard()"])
