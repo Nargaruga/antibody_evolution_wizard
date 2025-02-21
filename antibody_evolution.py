@@ -213,19 +213,6 @@ class Antibody_evolution(Wizard):
         self.status = WizardState.CHAIN_SELECTED
         cmd.refresh_wizard()
 
-    def do_pick(self, bondFlag):
-        """
-        React to the user clicking on the molecule.
-        :param bondFlag: True if a bond is selected
-        """
-        if bondFlag:
-            self._error = "Please select an atom and not a bond."
-            print(self._error)
-        else:
-            self.do_select("byres pk1")
-
-        cmd.refresh_wizard()
-
     def find_mutation_for(self, sel: str):
         residues = []
 
@@ -240,12 +227,12 @@ class Antibody_evolution(Wizard):
             space=context,
         )
 
-        print(residues)
         residue = residues[0]
         for mutation_str, mutation in self.mutations.items():
             if mutation.start_residue == residue:
-                self.set_mutation(mutation_str)
-                return
+                return mutation_str
+            
+        return None
 
     def do_select(self, name: str):
         """
@@ -254,21 +241,17 @@ class Antibody_evolution(Wizard):
         :param selection: A PyMOL selection
         :type selection: string
         """
-
-        cmd.select("tmp", name)
-        cmd.unpick()
         try:
             mutation = self.find_mutation_for(name)
             if mutation is None:
-                return
-
-            self.set_mutation(mutation)
+                print("No mutation available the selected residue.")
+            else:
+                self.set_mutation(mutation)
         except WizardError as e:
             print(e)
 
         cmd.delete(name)
-        cmd.refresh_wizard()
-        cmd.deselect()
+
 
     def highlight_mutations(self):
         for mutation_str, mutation in self.mutations.items():
@@ -376,8 +359,8 @@ class Antibody_evolution(Wizard):
         """Set the selected mutation to apply."""
         mutation = self.mutations[mutation_str]
         self.selected_mutation = mutation
-        cmd.select("mutation", mutation.start_residue.get_selection_str())
-        cmd.zoom("mutation", 2)
+        cmd.select("to_mutate", mutation.start_residue.get_selection_str())
+        cmd.zoom("to_mutate", 2)
 
         self.status = WizardState.MUTATION_SELECTED
         cmd.refresh_wizard()
@@ -417,13 +400,13 @@ class Antibody_evolution(Wizard):
         cmd.wizard("mutagenesis")
         cmd.do("refresh_wizard")
         cmd.get_wizard().set_mode("%s" % one_to_three(self.selected_mutation.target))
-        selection = "/%s/%s/%s" % (
-            self.molecule,
-            self.selected_mutation.start_residue.chain,
-            self.selected_mutation.start_residue.id,
-        )
-        cmd.select("sele", selection)
-        cmd.get_wizard().do_select("sele")
+        # selection = "/%s/%s/%s" % (
+        #     self.molecule,
+        #     self.selected_mutation.start_residue.chain,
+        #     self.selected_mutation.start_residue.id,
+        # )
+        # cmd.select("sele", selection)
+        cmd.get_wizard().do_select("to_mutate")
         cmd.frame(str(1))
         cmd.get_wizard().apply()
         cmd.set_wizard()
