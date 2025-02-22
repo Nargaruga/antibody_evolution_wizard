@@ -152,7 +152,7 @@ class Antibody_evolution(Wizard):
     def get_prompt(self):  # type: ignore
         """Return the prompt for the current state of the wizard."""
 
-        self.prompt = ["Binding affinity: %s" % self.binding_affinity]
+        self.prompt = []
         if self.status == WizardState.INITIALIZING:
             self.prompt.append("Initializing, please wait...")
         elif self.status == WizardState.READY:
@@ -268,6 +268,24 @@ class Antibody_evolution(Wizard):
             cmd.color("cyan", f"{self.molecule} and resi {r.id} and chain {r.chain}")
             cmd.label(f"{r.get_selection_str()} and name CA", f'"{mutation_str}"')
 
+    def attach_affinity_label(self, state):
+        label_name = "big_label"
+
+        if not cmd.get_object_list(label_name):
+            cmd.create(label_name, "none")
+        
+        cmd.remove(f"{label_name} and state {state}")
+
+        cmd.pseudoatom(
+           label_name,
+            pos=(cmd.get_coords(f"{self.molecule} and index 1")[0] - [0, 30, 0]).tolist(),
+            label=f"Binding affinity: {self.binding_affinity} kcal/mol",
+            state=state
+        )
+        cmd.set("label_size", 30, label_name)
+        cmd.set("label_color", "yellow", label_name)
+        cmd.set("float_labels", 1, label_name)
+
     def record_history(self):
         self.history.append(
             HistoryEntry(self.binding_affinity, list(self.mutations.values()))
@@ -292,8 +310,8 @@ class Antibody_evolution(Wizard):
                 mut.to_string(): mut for mut in self.history[-1].mutations
             }
             self.selected_mutation = None
-            print(self.molecule)
             cmd.delete_states(self.molecule, f"{cmd.count_states(self.molecule)}")
+            cmd.delete_states("big_label", f"{cmd.count_states('big_label')}")
             self.populate_mutation_choices(list(self.mutations.values()))
             self.highlight_mutations()
             print("Undid last mutation")
@@ -420,6 +438,7 @@ class Antibody_evolution(Wizard):
 
         os.remove(f"{self.molecule}.pdb")
 
+        self.attach_affinity_label(cmd.get_state())
         self.update_history()
 
         cmd.refresh_wizard()
@@ -445,6 +464,7 @@ class Antibody_evolution(Wizard):
         cmd.get_wizard().set_mode("%s" % one_to_three(self.selected_mutation.target))
 
         cmd.create("last_state", self.molecule, source_state=-1, target_state=-1)
+        self.attach_affinity_label(cmd.count_states(self.molecule) + 1)
         cmd.select(
             "tmp",
             f"last_state and resi {self.selected_mutation.start_residue.id} and chain {self.selected_mutation.start_residue.chain}",
