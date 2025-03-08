@@ -208,7 +208,7 @@ class Antibody_evolution(Wizard):
                 [
                     1,
                     c,
-                    'cmd.get_wizard().set_chain("' + c + '")',
+                    'cmd.get_wizard().set_antibody_chain("' + c + '")',
                 ]
             )
 
@@ -216,7 +216,7 @@ class Antibody_evolution(Wizard):
                 [
                     1,
                     c,
-                    'cmd.get_wizard().set_chain("' + c + '")',
+                    'cmd.get_wizard().set_antigen_chain("' + c + '")',
                 ]
             )
 
@@ -346,9 +346,13 @@ class Antibody_evolution(Wizard):
             "residues": residues,
             "Residue": Residue,
         }
+
+        def record_residue(molecule, oneletter, resi, chain):
+            residues.append(Residue(molecule, oneletter, resi, chain))
+
         cmd.iterate(
             f"{self.molecule} and chain {self.antibody_chain} and name CA",
-            "record_residue(molecule,oneletter,resi,chain,segi)",
+            "record_residue(molecule,oneletter,resi,chain)",
             space=context,
         )
 
@@ -366,7 +370,7 @@ class Antibody_evolution(Wizard):
             print("Please select a molecule.")
             return
 
-        if self.chain is None:
+        if self.antibody_chain is None:
             print("Please select a chain.")
             return
 
