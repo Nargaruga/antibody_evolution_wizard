@@ -5,10 +5,17 @@ import subprocess
 
 def main():
     wizard_root = sys.argv[1]
-    env_name = sys.argv[2]
 
     subprocess.run(
-        ["conda", "run", "-n", env_name, "pip", "install", "-e", "."],
+        [
+            "conda",
+            "env",
+            "create",
+            "--name",
+            "efficient-evolution",
+            "-f",
+            "environment.yml",
+        ],
         cwd=os.path.join(wizard_root, "ext", "efficient-evolution"),
     )
 
