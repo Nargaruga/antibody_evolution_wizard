@@ -78,7 +78,7 @@ class WizardState(IntEnum):
     INITIALIZING = auto()
     READY = auto()
     MOLECULE_SELECTED = auto()
-    CHAIN_SELECTED = auto()
+    ANTIBODY_CHAIN_SELECTED = auto()
     RUNNING_INFERENCE = auto()
     SUGGESTIONS_GENERATED = auto()
     MUTATION_SELECTED = auto()
@@ -93,7 +93,8 @@ class Antibody_evolution(Wizard):
         self.status = WizardState.INITIALIZING
         self.models = ["esm1b"]
         self.molecule = None
-        self.chain = None
+        self.antibody_chain = None
+        self.antigen_chain = None
         self.mutations = {}
         self.selected_mutation = None
         self.binding_affinity = 0.0
@@ -124,9 +125,9 @@ class Antibody_evolution(Wizard):
             self.prompt.append("Select a molecule.")
         elif self.status == WizardState.MOLECULE_SELECTED:
             self.prompt.append("Select a chain.")
-        elif self.status == WizardState.CHAIN_SELECTED:
+        elif self.status == WizardState.ANTIBODY_CHAIN_SELECTED:
             self.prompt.append(
-                f"Run to generate mutation suggestions for {self.molecule}, chain {self.chain}."
+                f"Run to generate mutation suggestions for {self.molecule}, chain {self.antibody_chain}."
             )
         elif self.status == WizardState.RUNNING_INFERENCE:
             self.prompt.append("Running inference, please wait...")
@@ -165,9 +166,18 @@ class Antibody_evolution(Wizard):
             return
 
         chains = cmd.get_chains(self.molecule)
-        self.menu["chain"] = [[2, "Chain", ""]]
+        self.menu["antibody_chain"] = [[2, "Antibody Chain", ""]]
+        self.menu["antigen_chain"] = [[2, "Antigen Chain", ""]]
         for c in chains:
-            self.menu["chain"].append(
+            self.menu["antibody_chain"].append(
+                [
+                    1,
+                    c,
+                    'cmd.get_wizard().set_chain("' + c + '")',
+                ]
+            )
+
+            self.menu["antigen_chain"].append(
                 [
                     1,
                     c,
@@ -182,11 +192,18 @@ class Antibody_evolution(Wizard):
         self.populate_chain_choices()
         cmd.refresh_wizard()
 
-    def set_chain(self, chain):
-        """Set the chain to generate mutation suggestions for."""
-        self.chain = chain
-        self.status = WizardState.CHAIN_SELECTED
+    def set_antibody_chain(self, chain):
+        """Set the antibody chain to generate mutation suggestions for."""
+        self.antibody_chain = chain
+        self.status = WizardState.ANTIBODY_CHAIN_SELECTED
         cmd.refresh_wizard()
+
+    def set_antigen_chain(self, chain):
+        """Set the antigen chain."""
+        self.antigen_chain = chain
+        self.status = WizardState.ANTIBODY_CHAIN_SELECTED
+        cmd.refresh_wizard()
+
 
     def run(self):
         """Run the wizard to generate suggestions for the selected molecule."""
@@ -206,7 +223,7 @@ class Antibody_evolution(Wizard):
             "molecule": self.molecule,
         }
         cmd.iterate(
-            f"{self.molecule} and chain {self.chain} and name CA",
+            f"{self.molecule} and chain {self.antibody_chain} and name CA",
             "record_residue(molecule,oneletter,resi,chain,segi)",
             space=context,
         )
@@ -277,7 +294,7 @@ class Antibody_evolution(Wizard):
 
         # TODO: specify chains
         res = subprocess.run(
-            ["prodigy", f"{self.molecule}.pdb", "--pymol_selection", "--quiet"],
+            ["prodigy", f"{self.molecule}.pdb", "--selection " "--quiet"],
             capture_output=True,
         )
         self.parse_prodigy_output(res.stdout)
@@ -362,10 +379,14 @@ class Antibody_evolution(Wizard):
             )
 
             options.append(
-                [3, self.chain, "chain"],
+                [3, self.antibody_chain, "antibody_chain"],
             )
 
-        if self.status >= WizardState.CHAIN_SELECTED:
+            options.append(
+                [3, self.antigen_chain, "antigen_chain"],
+            )
+
+        if self.status >= WizardState.ANTIBODY_CHAIN_SELECTED:
             options.append(
                 [2, "Run Inference", "cmd.get_wizard().run()"],
             )
