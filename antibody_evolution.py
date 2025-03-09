@@ -132,7 +132,6 @@ class Antibody_evolution(Wizard):
         self.selected_mutation = None
         self.binding_affinity = 0.0
         self.history: list[HistoryEntry] = [HistoryEntry(0.0, [])]
-        self.last_frame = 0
         self.populate_molecule_choices()
 
         # Load the model in a separate thread
@@ -354,7 +353,7 @@ class Antibody_evolution(Wizard):
         }
 
         cmd.iterate(
-            f"{self.molecule} and chain {self.antibody_chain} and name CA",
+            f"{self.molecule} and chain {self.antibody_chain} and name CA and state {len(self.history)}",
             "record_residue(molecule,oneletter,resi,chain)",
             space=context,
         )
