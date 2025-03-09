@@ -289,14 +289,16 @@ class Antibody_evolution(Wizard):
 
         if not cmd.get_object_list(label_name):
             cmd.create(label_name, "none")
-        
+
         cmd.remove(f"{label_name} and state {state}")
 
         cmd.pseudoatom(
-           label_name,
-            pos=(cmd.get_coords(f"{self.molecule} and index 1")[0] - [0, 30, 0]).tolist(),
+            label_name,
+            pos=(
+                cmd.get_coords(f"{self.molecule} and index 1")[0] - [0, 30, 0]
+            ).tolist(),
             label=f"Binding affinity: {self.binding_affinity} kcal/mol",
-            state=state
+            state=state,
         )
         cmd.set("label_size", 30, label_name)
         cmd.set("label_color", "yellow", label_name)
@@ -341,14 +343,15 @@ class Antibody_evolution(Wizard):
 
         residues = []
 
+        def record_residue(molecule, oneletter, resi, chain):
+            residues.append(Residue(molecule, oneletter, resi, chain))
+
         context = {
             "molecule": self.molecule,
             "residues": residues,
             "Residue": Residue,
+            "record_residue": record_residue,
         }
-
-        def record_residue(molecule, oneletter, resi, chain):
-            residues.append(Residue(molecule, oneletter, resi, chain))
 
         cmd.iterate(
             f"{self.molecule} and chain {self.antibody_chain} and name CA",
