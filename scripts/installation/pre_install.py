@@ -19,6 +19,20 @@ def main():
         cwd=os.path.join(wizard_root, "ext", "efficient-evolution"),
     )
 
+    subprocess.run(
+        [
+            "conda",
+            "run",
+            "-n",
+            "efficient-evolution",
+            "pip",
+            "install",
+            "-e",
+            ".",
+        ],
+        cwd=os.path.join(wizard_root, "ext", "efficient-evolution"),
+    )
+
 
 if __name__ == "__main__":
     main()
