@@ -1,0 +1,14 @@
+name: pymol_antibody_evo
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - freetype
+  - pyqt
+  - python=3.9
+  - libpng
+  - glm
+  - pyyaml
+  - openmm
+  - libnetcdf
+  - pip
