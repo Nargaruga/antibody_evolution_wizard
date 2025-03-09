@@ -418,7 +418,9 @@ class Antibody_evolution(Wizard):
 
         mutations = []
         for line in output.strip().split("\\n"):
-            mutations.append(Mutation.from_EE_output(line, self.molecule, self.chain))
+            mutations.append(
+                Mutation.from_EE_output(line, self.molecule, self.antibody_chain)
+            )
 
         return mutations
 
@@ -450,12 +452,23 @@ class Antibody_evolution(Wizard):
     def evaluate_binding_affinity(self):
         """Evaluate the binding affinity using Prodigy."""
 
+        if self.antibody_chain is None or self.antigen_chain is None:
+            print("Please select an antibody and antigen chain.")
+            return
+
         cmd.save(f"{self.molecule}.pdb", f"{self.molecule}")
 
-        # TODO: specify chains
         res = subprocess.run(
-            ["prodigy", f"{self.molecule}.pdb", "--selection " "--quiet"],
+            [
+                "prodigy",
+                f"{self.molecule}.pdb",
+                "--selection",
+                self.antigen_chain,
+                self.antibody_chain,
+                "--quiet",
+            ],
             capture_output=True,
+            text=True,
         )
         self.parse_prodigy_output(res.stdout)
 
@@ -470,7 +483,7 @@ class Antibody_evolution(Wizard):
         """Parse the output of Prodigy to get the binding affinity."""
 
         if output is None or len(output.split()) != 2:
-            print("Error: could not parse Prodigy output.")
+            print(f"Error: could not parse Prodigy output. Got: {output}")
             return
 
         self.binding_affinity = float(output.split()[1])
