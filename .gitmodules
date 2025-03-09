@@ -1,3 +1,7 @@
 [submodule "ext/pymol_wizard_installer"]
 	path = ext/pymol_wizard_installer
 	url = git@github.com:Nargaruga/pymol_wizard_installer.git
+[submodule "ext/efficient-evolution"]
+	path = ext/efficient-evolution
+	url = git@github.com:Nargaruga/efficient-evolution.git
+	branch = installable
