@@ -8,7 +8,7 @@ pymol_version: 3.3.0
 openvr_version: 1.0.17
 
 extra_dirs:
-  - config
+  - [config, config]
 
 pre_script: "scripts/installation/pre_install.py"
 post_script: ""
