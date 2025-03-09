@@ -417,9 +417,10 @@ class Antibody_evolution(Wizard):
 
         mutations = []
         for line in output.strip().split("\\n"):
-            mutations.append(
-                Mutation.from_EE_output(line, self.molecule, self.antibody_chain)
-            )
+            if line:
+                mutations.append(
+                    Mutation.from_EE_output(line, self.molecule, self.antibody_chain)
+                )
 
         return mutations
 
