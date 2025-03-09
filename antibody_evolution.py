@@ -130,7 +130,6 @@ class Antibody_evolution(Wizard):
         self.antigen_chain = None
         self.mutations = {}
         self.selected_mutation = None
-        self.binding_affinity = 0.0
         self.history: list[HistoryEntry] = [HistoryEntry(0.0, [])]
         self.populate_molecule_choices()
 
@@ -280,10 +279,10 @@ class Antibody_evolution(Wizard):
     def highlight_mutations(self):
         for mutation_str, mutation in self.mutations.items():
             r = mutation.start_residue
-            cmd.color("cyan", f"{self.molecule} and resi {r.id} and chain {r.chain}")
-            cmd.label(f"{r.get_selection_str()} and name CA", f'"{mutation_str}"')
+            cmd.color("cyan", f"{self.molecule} and resi {r.id} and chain {r.chain} and state {cmd.count_states(self.molecule)}")
+            cmd.label(f"{r.get_selection_str()} and name CA and state {cmd.count_states(self.molecule)}", f'"{mutation_str}"')
 
-    def attach_affinity_label(self, state):
+    def attach_affinity_label(self, affinity, state):
         label_name = "big_label"
 
         if not cmd.get_object_list(label_name):
@@ -296,28 +295,28 @@ class Antibody_evolution(Wizard):
             pos=(
                 cmd.get_coords(f"{self.molecule} and index 1")[0] - [0, 30, 0]
             ).tolist(),
-            label=f"Binding affinity: {self.binding_affinity} kcal/mol",
+            label=f"Binding affinity: {affinity} kcal/mol",
             state=state,
         )
         cmd.set("label_size", 30, label_name)
         cmd.set("label_color", "yellow", label_name)
         cmd.set("float_labels", 1, label_name)
 
-    def record_history(self):
+    def record_history(self, affinity):
         self.history.append(
-            HistoryEntry(self.binding_affinity, list(self.mutations.values()))
+            HistoryEntry(affinity, list(self.mutations.values()))
         )
         print(f"Recorded history entry {len(self.history)}.")
 
-    def update_history(self):
-        if len(self.history) > 0:
-            current_state = cmd.get_state()
-            print(
-                f"Current state: {current_state}, history length: {len(self.history)}"
-            )
-            self.history[current_state - 1].binding_affinity = self.binding_affinity
-            self.history[current_state - 1].mutations = list(self.mutations.values())
-            print(f"Updated history entry {len(self.history)}.")
+    # def update_history(self):
+    #     if len(self.history) > 0:
+    #         current_state = cmd.get_state()
+    #         print(
+    #             f"Current state: {current_state}, history length: {len(self.history)}"
+    #         )
+    #         self.history[current_state - 1].binding_affinity = self.binding_affinity
+    #         self.history[current_state - 1].mutations = list(self.mutations.values())
+    #         print(f"Updated history entry {len(self.history)}.")
 
     def undo(self):
         if len(self.history) > 1:
@@ -405,8 +404,6 @@ class Antibody_evolution(Wizard):
         self.populate_mutation_choices(mutations)
         self.highlight_mutations()
 
-        self.update_history()
-
         print("Select a mutation.")
 
         self.status = WizardState.SUGGESTIONS_GENERATED
@@ -449,6 +446,13 @@ class Antibody_evolution(Wizard):
         self.status = WizardState.MUTATION_SELECTED
         cmd.refresh_wizard()
 
+    def update_binding_affinity(self):
+        """Update the binding affinity for the current state of the molecule."""
+
+        affinity = self.evaluate_binding_affinity()
+        print(f"New affinity for state {cmd.get_state()}: {affinity} kcal/mol.")
+        self.attach_affinity_label(affinity, cmd.get_state())
+
     def evaluate_binding_affinity(self):
         """Evaluate the binding affinity using Prodigy."""
 
@@ -456,7 +460,8 @@ class Antibody_evolution(Wizard):
             print("Please select an antibody and antigen chain.")
             return
 
-        cmd.save(f"{self.molecule}.pdb", f"{self.molecule}")
+        print(f"Evaluating affinity for {self.molecule}, state {cmd.get_state()}.")
+        cmd.save(f"{self.molecule}.pdb", f"{self.molecule}", state=cmd.get_state())
 
         res = subprocess.run(
             [
@@ -470,14 +475,9 @@ class Antibody_evolution(Wizard):
             capture_output=True,
             text=True,
         )
-        self.parse_prodigy_output(res.stdout)
 
         os.remove(f"{self.molecule}.pdb")
-
-        self.attach_affinity_label(cmd.get_state())
-        self.update_history()
-
-        cmd.refresh_wizard()
+        return self.parse_prodigy_output(res.stdout)
 
     def parse_prodigy_output(self, output):
         """Parse the output of Prodigy to get the binding affinity."""
@@ -486,7 +486,7 @@ class Antibody_evolution(Wizard):
             print(f"Error: could not parse Prodigy output. Got: {output}")
             return
 
-        self.binding_affinity = float(output.split()[1])
+        return float(output.split()[1])
 
     def apply_mutation(self):
         """Apply the selected mutation to the molecule."""
@@ -499,8 +499,8 @@ class Antibody_evolution(Wizard):
         cmd.do("refresh_wizard")
         cmd.get_wizard().set_mode("%s" % one_to_three(self.selected_mutation.target))
 
+        # The mutation is applied to the last state
         cmd.create("last_state", self.molecule, source_state=-1, target_state=-1)
-        self.attach_affinity_label(cmd.count_states(self.molecule) + 1)
         cmd.select(
             "tmp",
             f"last_state and resi {self.selected_mutation.start_residue.id} and chain {self.selected_mutation.start_residue.chain}",
@@ -523,8 +523,13 @@ class Antibody_evolution(Wizard):
 
         cmd.label(f"{self.molecule}", "''")
         self.highlight_mutations()
-        self.record_history()
-        self.evaluate_binding_affinity()
+
+        # Record the new binding affinity
+        affinity = self.evaluate_binding_affinity()
+        self.record_history(affinity)
+        self.attach_affinity_label(affinity, cmd.count_states(self.molecule))
+
+        cmd.refresh_wizard()
 
         self.status = WizardState.MUTATION_APPLIED
         cmd.refresh_wizard()
@@ -558,7 +563,7 @@ class Antibody_evolution(Wizard):
                 [
                     2,
                     "Evaluate Affinity",
-                    "cmd.get_wizard().evaluate_binding_affinity()",
+                    "cmd.get_wizard().update_binding_affinity()",
                 ],
             )
 
