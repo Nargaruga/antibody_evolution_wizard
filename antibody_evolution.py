@@ -580,7 +580,7 @@ class Antibody_evolution(Wizard):
                 [2, "Run Inference", "cmd.get_wizard().run()"],
             )
 
-        if self.status >= WizardState.SUGGESTIONS_GENERATED:
+        if self.status >= WizardState.SUGGESTIONS_GENERATED or self.mutations:
             options.append(
                 [3, mutations_label, "mutations"],
             )
