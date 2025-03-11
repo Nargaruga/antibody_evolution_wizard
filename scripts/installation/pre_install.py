@@ -11,20 +11,28 @@ def main():
     else:
         prefix = []
 
-    subprocess.run(
-        prefix
-        + [
-            "conda",
-            "env",
-            "create",
-            "--name",
-            "efficient-evolution",
-            "-f",
-            "environment.yml",
-        ],
-        cwd=os.path.join(wizard_root, "ext", "efficient-evolution"),
-        check=True,
-    )
+    try:
+        subprocess.run(
+            "conda list --name efficient-evolution",
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.STDOUT,
+            shell=True,
+        ).check_returncode()
+    except subprocess.CalledProcessError:
+        subprocess.run(
+            prefix
+            + [
+                "conda",
+                "env",
+                "create",
+                "--name",
+                "efficient-evolution",
+                "-f",
+                "environment.yml",
+            ],
+            cwd=os.path.join(wizard_root, "ext", "efficient-evolution"),
+            check=True,
+        )
 
     subprocess.run(
         prefix
