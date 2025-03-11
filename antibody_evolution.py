@@ -413,7 +413,7 @@ class Antibody_evolution(Wizard):
         """Parse the output of Efficient Evolution to get the binding affinity."""
 
         mutations = []
-        for line in output.strip().split("\\n"):
+        for line in output.strip().splitlines():
             if line:
                 mutations.append(
                     Mutation.from_EE_output(line, self.molecule, self.antibody_chain)
