@@ -392,8 +392,8 @@ class Antibody_evolution(Wizard):
                     "recommend",
                     sequence,
                     "--model-names",
-                    " ".join(self.models),
-                ],
+                ]
+                + self.models,
                 check=True,
                 capture_output=True,
                 text=True,
@@ -417,10 +417,11 @@ class Antibody_evolution(Wizard):
         """Parse the output of Efficient Evolution to get the binding affinity."""
 
         mutations = []
-        for line in output.strip().split("\\n"):
-            mutations.append(
-                Mutation.from_EE_output(line, self.molecule, self.antibody_chain)
-            )
+        for line in output.strip().splitlines():
+            if line:
+                mutations.append(
+                    Mutation.from_EE_output(line, self.molecule, self.antibody_chain)
+                )
 
         return mutations
 
