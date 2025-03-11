@@ -6,8 +6,14 @@ import subprocess
 def main():
     wizard_root = sys.argv[1]
 
+    if os.name == "nt":
+        prefix = ["powershell.exe"]
+    else:
+        prefix = []
+
     subprocess.run(
-        [
+        prefix
+        + [
             "conda",
             "env",
             "create",
@@ -17,10 +23,12 @@ def main():
             "environment.yml",
         ],
         cwd=os.path.join(wizard_root, "ext", "efficient-evolution"),
+        check=True,
     )
 
     subprocess.run(
-        [
+        prefix
+        + [
             "conda",
             "run",
             "-n",
@@ -31,6 +39,7 @@ def main():
             ".",
         ],
         cwd=os.path.join(wizard_root, "ext", "efficient-evolution"),
+        check=True,
     )
 
 
