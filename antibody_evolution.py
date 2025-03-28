@@ -296,6 +296,10 @@ class Antibody_evolution(Wizard):
             )
 
     def attach_affinity_label(self, affinity, state):
+        if self.molecule is None:
+            print("Please select a molecule.")
+            return
+
         label_name = "big_label"
 
         if not cmd.get_object_list(label_name):
@@ -305,9 +309,7 @@ class Antibody_evolution(Wizard):
 
         cmd.pseudoatom(
             label_name,
-            pos=(
-                cmd.get_coords(f"{self.molecule} and index 1")[0] - [0, 30, 0]
-            ).tolist(),
+            pos=(cmd.get_coords(self.molecule)[0] - [0, 30, 0]).tolist(),
             label=f"Binding affinity: {affinity} kcal/mol",
             state=state,
         )
