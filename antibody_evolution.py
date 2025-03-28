@@ -127,7 +127,7 @@ class Antibody_evolution(Wizard):
         self.models = ["esm1b"]
         self.molecule = None
         self.antibody_chain = None
-        self.antigen_chain = None
+        self.antigen_chains = []
         self.mutations = {}
         self.selected_mutation = None
         self.history: list[HistoryEntry] = [HistoryEntry(0.0, [])]
@@ -196,11 +196,12 @@ class Antibody_evolution(Wizard):
         """Populate the menu with the available chains in the selected molecule."""
 
         if self.molecule is None:
+            print("Please select a molecule.")
             return
 
         chains = cmd.get_chains(self.molecule)
         self.menu["antibody_chain"] = [[2, "Antibody Chain", ""]]
-        self.menu["antigen_chain"] = [[2, "Antigen Chain", ""]]
+        self.menu["antigen_chains"] = [[2, "Antigen Chains", ""]]
         for c in chains:
             self.menu["antibody_chain"].append(
                 [
@@ -210,7 +211,7 @@ class Antibody_evolution(Wizard):
                 ]
             )
 
-            self.menu["antigen_chain"].append(
+            self.menu["antigen_chains"].append(
                 [
                     1,
                     c,
@@ -233,7 +234,10 @@ class Antibody_evolution(Wizard):
 
     def set_antigen_chain(self, chain):
         """Set the antigen chain."""
-        self.antigen_chain = chain
+        if chain in self.antigen_chains:
+            self.antigen_chains.remove(chain)
+        else:
+            self.antigen_chains.append(chain)
         self.status = WizardState.ANTIBODY_CHAIN_SELECTED
         cmd.refresh_wizard()
 
@@ -250,6 +254,9 @@ class Antibody_evolution(Wizard):
             "residues.append(Residue(molecule,oneletter,resi,chain))",
             space=context,
         )
+
+        if len(residues) == 0:
+            raise WizardError("No residues selected.")
 
         residue = residues[0]
         for mutation_str, mutation in self.mutations.items():
@@ -279,8 +286,14 @@ class Antibody_evolution(Wizard):
     def highlight_mutations(self):
         for mutation_str, mutation in self.mutations.items():
             r = mutation.start_residue
-            cmd.color("cyan", f"{self.molecule} and resi {r.id} and chain {r.chain} and state {cmd.count_states(self.molecule)}")
-            cmd.label(f"{r.get_selection_str()} and name CA and state {cmd.count_states(self.molecule)}", f'"{mutation_str}"')
+            cmd.color(
+                "cyan",
+                f"{self.molecule} and resi {r.id} and chain {r.chain} and state {cmd.count_states(self.molecule)}",
+            )
+            cmd.label(
+                f"{r.get_selection_str()} and name CA and state {cmd.count_states(self.molecule)}",
+                f'"{mutation_str}"',
+            )
 
     def attach_affinity_label(self, affinity, state):
         label_name = "big_label"
@@ -303,9 +316,7 @@ class Antibody_evolution(Wizard):
         cmd.set("float_labels", 1, label_name)
 
     def record_history(self, affinity):
-        self.history.append(
-            HistoryEntry(affinity, list(self.mutations.values()))
-        )
+        self.history.append(HistoryEntry(affinity, list(self.mutations.values())))
         print(f"Recorded history entry {len(self.history)}.")
 
     # def update_history(self):
@@ -339,32 +350,14 @@ class Antibody_evolution(Wizard):
             print("Please select a molecule.")
             return
 
-        residues = []
-
-        def record_residue(molecule, oneletter, resi, chain):
-            residues.append(Residue(molecule, oneletter, resi, chain))
-
-        context = {
-            "molecule": self.molecule,
-            "residues": residues,
-            "Residue": Residue,
-            "record_residue": record_residue,
-        }
-
-        cmd.iterate(
-            f"{self.molecule} and chain {self.antibody_chain} and name CA and state {len(self.history)}",
-            "record_residue(molecule,oneletter,resi,chain)",
-            space=context,
-        )
-
         self.status = WizardState.RUNNING_INFERENCE
         cmd.refresh_wizard()
 
         # Run inference on a separate thread
-        worker_thread = threading.Thread(target=self.run_inference, args=[residues])
+        worker_thread = threading.Thread(target=self.run_inference)
         worker_thread.start()
 
-    def run_inference(self, residues):
+    def run_inference(self):
         """Run the inference to generate mutation suggestions."""
 
         if self.molecule is None:
@@ -375,9 +368,8 @@ class Antibody_evolution(Wizard):
             print("Please select a chain.")
             return
 
-        sequence = ""
-        for residue in residues:
-            sequence += residue.name
+        fasta_str = cmd.get_fastastr(f"{self.molecule} and chain {self.antibody_chain}")
+        sequence = fasta_str.split("\n")[1]
 
         print(f"Running inference with models {self.models}")
         try:
@@ -456,7 +448,7 @@ class Antibody_evolution(Wizard):
     def evaluate_binding_affinity(self):
         """Evaluate the binding affinity using Prodigy."""
 
-        if self.antibody_chain is None or self.antigen_chain is None:
+        if self.antibody_chain is None or self.antigen_chains == []:
             print("Please select an antibody and antigen chain.")
             return
 
@@ -468,8 +460,8 @@ class Antibody_evolution(Wizard):
                 "prodigy",
                 f"{self.molecule}.pdb",
                 "--selection",
-                self.antigen_chain,
                 self.antibody_chain,
+                ",".join(self.antigen_chains),
                 "--quiet",
             ],
             capture_output=True,
@@ -537,28 +529,42 @@ class Antibody_evolution(Wizard):
     def get_panel(self):
         """Return the menu panel for the wizard."""
 
-        if self.molecule is None:
-            molecule_label = "Choose molecule"
-        else:
-            molecule_label = self.molecule
-
-        if self.mutations is None:
-            mutations_label = "-"
-        elif self.selected_mutation is None:
-            mutations_label = "Select Mutation"
-        else:
-            mutations_label = self.selected_mutation.to_string()
-
+        # Title
         options = [
-            [1, "Mutation Suggestions", ""],
+            [1, "Antibody Evolution", ""],
         ]
 
+        # Choose molecule
         if self.status >= WizardState.READY:
+            if self.molecule is None:
+                molecule_label = "Choose molecule"
+            else:
+                molecule_label = self.molecule
+
             options.append(
                 [3, molecule_label, "molecule"],
             )
 
+        # Add entries to select chains and evaluate affinity
         if self.status >= WizardState.MOLECULE_SELECTED:
+            antibody_chain_label = "Antibody Chain: "
+            if self.antibody_chain:
+                antibody_chain_label += self.antibody_chain
+            else:
+                antibody_chain_label += "None"
+            options.append(
+                [3, antibody_chain_label, "antibody_chain"],
+            )
+
+            antigen_chains_label = "Antigen Chains: "
+            if self.antigen_chains:
+                antigen_chains_label += ", ".join(self.antigen_chains)
+            else:
+                antigen_chains_label += "None"
+            options.append(
+                [3, antigen_chains_label, "antigen_chains"],
+            )
+
             options.append(
                 [
                     2,
@@ -567,24 +573,24 @@ class Antibody_evolution(Wizard):
                 ],
             )
 
-            options.append(
-                [3, self.antibody_chain, "antibody_chain"],
-            )
-
-            options.append(
-                [3, self.antigen_chain, "antigen_chain"],
-            )
-
+        # Add button to generate suggestions
         if self.status >= WizardState.ANTIBODY_CHAIN_SELECTED:
             options.append(
                 [2, "Run Inference", "cmd.get_wizard().run()"],
             )
 
+        # Add entries to select and apply mutations
         if self.status >= WizardState.SUGGESTIONS_GENERATED or self.mutations:
+            if self.mutations is None:
+                mutations_label = "-"
+            elif self.selected_mutation is None:
+                mutations_label = "Select Mutation"
+            else:
+                mutations_label = self.selected_mutation.to_string()
+
             options.append(
                 [3, mutations_label, "mutations"],
             )
-
         if self.status >= WizardState.MUTATION_SELECTED:
             options.append(
                 [2, "Apply Mutation", "cmd.get_wizard().apply_mutation()"],
