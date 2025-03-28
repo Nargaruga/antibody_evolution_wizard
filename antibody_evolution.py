@@ -435,7 +435,6 @@ class Antibody_evolution(Wizard):
         mutation = self.mutations[mutation_str]
         self.selected_mutation = mutation
         cmd.select("to_mutate", mutation.start_residue.get_selection_str())
-        cmd.zoom("to_mutate", 2)
 
         self.status = WizardState.MUTATION_SELECTED
         cmd.refresh_wizard()
