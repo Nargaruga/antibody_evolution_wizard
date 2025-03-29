@@ -130,7 +130,7 @@ class Antibody_evolution(Wizard):
         self.antigen_chains = []
         self.mutations = {}
         self.selected_mutation = None
-        self.history: list[HistoryEntry] = [HistoryEntry(0.0, [])]
+        self.history: list[HistoryEntry] = []
         self.populate_molecule_choices()
 
         # Load the model in a separate thread
@@ -321,17 +321,11 @@ class Antibody_evolution(Wizard):
         self.history.append(HistoryEntry(affinity, list(self.mutations.values())))
         print(f"Recorded history entry {len(self.history)}.")
 
-    # def update_history(self):
-    #     if len(self.history) > 0:
-    #         current_state = cmd.get_state()
-    #         print(
-    #             f"Current state: {current_state}, history length: {len(self.history)}"
-    #         )
-    #         self.history[current_state - 1].binding_affinity = self.binding_affinity
-    #         self.history[current_state - 1].mutations = list(self.mutations.values())
-    #         print(f"Updated history entry {len(self.history)}.")
-
     def undo(self):
+        if self.molecule is None:
+            print("Please select a molecule.")
+            return
+
         if len(self.history) > 1:
             self.history.pop()
             self.binding_affinity = self.history[-1].binding_affinity
@@ -394,26 +388,22 @@ class Antibody_evolution(Wizard):
             print(f"Something went wrong while calling Efficient Evolution: {e}")
             return
 
-        mutations = self.parse_EE_output(res.stdout)
+        mutations = []
+        for line in res.stdout.strip().splitlines():
+            if line:
+                mutations.append(
+                    Mutation.from_EE_output(line, self.molecule, self.antibody_chain)
+                )
         self.populate_mutation_choices(mutations)
         self.highlight_mutations()
+
+        if self.history == []:
+            self.record_history(0.0)
 
         print("Select a mutation.")
 
         self.status = WizardState.SUGGESTIONS_GENERATED
         cmd.refresh_wizard()
-
-    def parse_EE_output(self, output: str) -> list[Mutation]:
-        """Parse the output of Efficient Evolution to get the binding affinity."""
-
-        mutations = []
-        for line in output.strip().splitlines():
-            if line:
-                mutations.append(
-                    Mutation.from_EE_output(line, self.molecule, self.antibody_chain)
-                )
-
-        return mutations
 
     def populate_mutation_choices(self, suggestions):
         """Populate the menu with the generated mutation suggestions."""
@@ -484,6 +474,10 @@ class Antibody_evolution(Wizard):
     def apply_mutation(self):
         """Apply the selected mutation to the molecule."""
 
+        if self.molecule is None:
+            print("Please select a molecule.")
+            return
+
         if self.selected_mutation is None:
             print("Please select a mutation.")
             return
@@ -499,13 +493,12 @@ class Antibody_evolution(Wizard):
             f"last_state and resi {self.selected_mutation.start_residue.id} and chain {self.selected_mutation.start_residue.chain}",
         )
         cmd.get_wizard().do_select("tmp")
-        cmd.frame(str(1))
         cmd.get_wizard().apply()
         cmd.join_states(self.molecule, "last_state", mode=-1)
         cmd.delete("last_state")
         cmd.set_wizard()
 
-        cmd.frame(str(cmd.count_states(self.molecule)))
+        cmd.frame(cmd.count_states(self.molecule))
 
         print(f"Applied mutation {self.selected_mutation.to_string()}.")
 
