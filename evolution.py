@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 from enum import IntEnum, auto
 import threading
-import subprocess
 from pathlib import Path
 from dataclasses import dataclass
 
@@ -14,87 +13,12 @@ from pymol import cmd
 
 import yaml
 
-# Map single letter amino acid codes to three letter codes
-RESIDUE_NAME_MAPPING = {
-    "C": "CYS",
-    "D": "ASP",
-    "S": "SER",
-    "Q": "GLN",
-    "K": "LYS",
-    "I": "ILE",
-    "P": "PRO",
-    "T": "THR",
-    "F": "PHE",
-    "N": "ASN",
-    "G": "GLY",
-    "H": "HIS",
-    "L": "LEU",
-    "R": "ARG",
-    "W": "TRP",
-    "A": "ALA",
-    "V": "VAL",
-    "E": "GLU",
-    "Y": "TYR",
-    "M": "MET",
-}
-
-
-def one_to_three(oneletter):
-    """Convert a single letter amino acid code to a three letter code."""
-    return RESIDUE_NAME_MAPPING[oneletter]
-
-
-@dataclass
-class Residue:
-    """A residue in a molecule."""
-
-    molecule: str
-    name: str
-    id: int
-    chain: str
-
-    def __eq__(self, other):
-        return (
-            self.molecule == str(other.molecule)
-            and self.name == str(other.name)
-            and self.id == int(other.id)
-            and self.chain == str(other.chain)
-        )
-
-    def get_selection_str(self):
-        """Get the PyMOL selection string for the residue."""
-        return f"{self.molecule} and resi {self.id} and chain {self.chain}"
-
-
-@dataclass
-class Mutation:
-    """An amino-acid mutation."""
-
-    molecule_name: str
-    start_residue: Residue
-    target: str
-    occurrences: int
-
-    def to_string(self):
-        """Get a string representation of the mutation."""
-        return f"{self.start_residue.chain}/{one_to_three(self.start_residue.name)}{self.start_residue.id}->{one_to_three(self.target)}"
-
-    @staticmethod
-    def from_EE_output(line: str, molecule, chain: str) -> Mutation:
-        # Efficient Evolution outputs strings in the form
-        # [start residue name][start residue id][target residue name] [occurrences]
-        # example: E1M 2
-        mut_str, count = line.split()
-        start_resn = mut_str[0]
-        start_resi = mut_str[1:-1]
-        target = mut_str[-1]
-
-        return Mutation(
-            molecule,
-            Residue(molecule, start_resn, int(start_resi), chain),
-            target,
-            int(count),
-        )
+from .antibody_evolution.mutation import Residue, one_to_three
+from .antibody_evolution.mutation_evaluation import compute_affinity
+from .antibody_evolution.mutation_suggestions import (
+    Suggestion,
+    get_mutation_suggestions,
+)
 
 
 @dataclass
@@ -102,7 +26,7 @@ class HistoryEntry:
     """An entry in the history of the wizard."""
 
     binding_affinity: float
-    mutations: list[Mutation]
+    suggestions: list[Suggestion]
 
 
 class WizardState(IntEnum):
@@ -112,13 +36,13 @@ class WizardState(IntEnum):
     READY = auto()
     MOLECULE_SELECTED = auto()
     ANTIBODY_CHAIN_SELECTED = auto()
-    RUNNING_INFERENCE = auto()
+    GENERATING_SUGGSTIONS = auto()
     SUGGESTIONS_GENERATED = auto()
     MUTATION_SELECTED = auto()
     MUTATION_APPLIED = auto()
 
 
-class Antibody_evolution(Wizard):
+class Evolution(Wizard):
     """A wizard for suggesting mutations to an antibody."""
 
     def __init__(self, _self=cmd):
@@ -128,8 +52,8 @@ class Antibody_evolution(Wizard):
         self.molecule = None
         self.antibody_chain = None
         self.antigen_chains = []
-        self.mutations = {}
-        self.selected_mutation = None
+        self.suggestions: dict[str, Suggestion] = {}
+        self.selected_suggestion = None
         self.history: list[HistoryEntry] = []
         self.populate_molecule_choices()
 
@@ -162,16 +86,16 @@ class Antibody_evolution(Wizard):
             self.prompt.append(
                 f"Run to generate mutation suggestions for {self.molecule}, chain {self.antibody_chain}."
             )
-        elif self.status == WizardState.RUNNING_INFERENCE:
-            self.prompt.append("Running inference, please wait...")
+        elif self.status == WizardState.GENERATING_SUGGSTIONS:
+            self.prompt.append("Generating suggestions, please wait...")
         elif self.status == WizardState.SUGGESTIONS_GENERATED:
             self.prompt.append("Select a mutation to apply.")
         elif (
             self.status == WizardState.MUTATION_SELECTED
-            and self.selected_mutation is not None
+            and self.selected_suggestion is not None
         ):
             self.prompt.append(
-                "Apply the mutation %s?" % self.selected_mutation.to_string()
+                "Apply the mutation %s?" % self.selected_suggestion.mutation.to_string()
             )
         elif self.status == WizardState.MUTATION_APPLIED:
             self.prompt.append("Mutation applied successfully.")
@@ -259,9 +183,9 @@ class Antibody_evolution(Wizard):
             raise WizardError("No residues selected.")
 
         residue = residues[0]
-        for mutation_str, mutation in self.mutations.items():
-            if mutation.start_residue == residue:
-                return mutation_str
+        for suggestion_str, suggestion in self.suggestions.items():
+            if suggestion.mutation.start_residue == residue:
+                return suggestion_str
 
         return None
 
@@ -277,21 +201,25 @@ class Antibody_evolution(Wizard):
             if mutation is None:
                 print("No mutation available the selected residue.")
             else:
-                self.set_mutation(mutation)
+                self.set_suggestion(mutation)
         except WizardError as e:
             print(e)
 
         cmd.delete(name)
 
     def highlight_mutations(self):
-        for mutation_str, mutation in self.mutations.items():
-            r = mutation.start_residue
+        if self.molecule is None:
+            print("Please select a molecule.")
+            return
+
+        for mutation_str, suggestion in self.suggestions.items():
+            start_residue = suggestion.mutation.start_residue
             cmd.color(
                 "cyan",
-                f"{self.molecule} and resi {r.id} and chain {r.chain} and state {cmd.count_states(self.molecule)}",
+                f"{self.molecule} and resi {start_residue.id} and chain {start_residue.chain} and state {cmd.count_states(self.molecule)}",
             )
             cmd.label(
-                f"{r.get_selection_str()} and name CA and state {cmd.count_states(self.molecule)}",
+                f"{start_residue.get_selection_str()} and name CA and state {cmd.count_states(self.molecule)}",
                 f'"{mutation_str}"',
             )
 
@@ -318,7 +246,7 @@ class Antibody_evolution(Wizard):
         cmd.set("float_labels", 1, label_name)
 
     def record_history(self, affinity):
-        self.history.append(HistoryEntry(affinity, list(self.mutations.values())))
+        self.history.append(HistoryEntry(affinity, list(self.suggestions.values())))
         print(f"Recorded history entry {len(self.history)}.")
 
     def undo(self):
@@ -329,13 +257,13 @@ class Antibody_evolution(Wizard):
         if len(self.history) > 1:
             self.history.pop()
             self.binding_affinity = self.history[-1].binding_affinity
-            self.mutations = {
-                mut.to_string(): mut for mut in self.history[-1].mutations
+            self.suggestions = {
+                s.mutation.to_string(): s for s in self.history[-1].suggestions
             }
-            self.selected_mutation = None
+            self.selected_suggestion = None
             cmd.delete_states(self.molecule, f"{cmd.count_states(self.molecule)}")
             cmd.delete_states("big_label", f"{cmd.count_states('big_label')}")
-            self.populate_mutation_choices(list(self.mutations.values()))
+            self.populate_mutation_choices(list(self.suggestions.values()))
             self.highlight_mutations()
             print("Undid last mutation")
 
@@ -346,15 +274,15 @@ class Antibody_evolution(Wizard):
             print("Please select a molecule.")
             return
 
-        self.status = WizardState.RUNNING_INFERENCE
+        self.status = WizardState.GENERATING_SUGGSTIONS
         cmd.refresh_wizard()
 
-        # Run inference on a separate thread
-        worker_thread = threading.Thread(target=self.run_inference)
+        # Generate suggestions on a separate thread
+        worker_thread = threading.Thread(target=self.suggest_mutations)
         worker_thread.start()
 
-    def run_inference(self):
-        """Run the inference to generate mutation suggestions."""
+    def suggest_mutations(self):
+        """Generate mutation suggestions."""
 
         if self.molecule is None:
             print("Please select a molecule.")
@@ -367,34 +295,11 @@ class Antibody_evolution(Wizard):
         fasta_str = cmd.get_fastastr(f"{self.molecule} and chain {self.antibody_chain}")
         sequence = fasta_str.split("\n")[1]
 
-        print(f"Running inference with models {self.models}")
-        try:
-            res = subprocess.run(
-                [
-                    "conda",
-                    "run",
-                    "-n",
-                    "efficient-evolution",
-                    "recommend",
-                    sequence,
-                    "--model-names",
-                ]
-                + self.models,
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-        except subprocess.CalledProcessError as e:
-            print(f"Something went wrong while calling Efficient Evolution: {e}")
-            return
+        annotated_mutations = get_mutation_suggestions(
+            self.molecule, sequence, self.models, self.antibody_chain
+        )
 
-        mutations = []
-        for line in res.stdout.strip().splitlines():
-            if line:
-                mutations.append(
-                    Mutation.from_EE_output(line, self.molecule, self.antibody_chain)
-                )
-        self.populate_mutation_choices(mutations)
+        self.populate_mutation_choices(annotated_mutations)
         self.highlight_mutations()
 
         if self.history == []:
@@ -405,26 +310,28 @@ class Antibody_evolution(Wizard):
         self.status = WizardState.SUGGESTIONS_GENERATED
         cmd.refresh_wizard()
 
-    def populate_mutation_choices(self, suggestions):
+    def populate_mutation_choices(self, suggestions: list[Suggestion]):
         """Populate the menu with the generated mutation suggestions."""
 
         self.menu["mutations"] = [[2, "Mutations", ""]]
         suggestions.sort(key=lambda x: -x.occurrences)
-        for mut in suggestions:
-            self.mutations[mut.to_string()] = mut
+        for suggestion in suggestions:
+            self.suggestions[suggestion.mutation.to_string()] = suggestion
             self.menu["mutations"].append(
                 [
                     1,
-                    f"{mut.to_string()} ({mut.occurrences})",
-                    'cmd.get_wizard().set_mutation("' + mut.to_string() + '")',
+                    f"{suggestion.mutation.to_string()} ({suggestion.occurrences})",
+                    'cmd.get_wizard().set_suggestion("'
+                    + suggestion.mutation.to_string()
+                    + '")',
                 ]
             )
 
-    def set_mutation(self, mutation_str):
+    def set_suggestion(self, mutation_str):
         """Set the selected mutation to apply."""
-        mutation = self.mutations[mutation_str]
-        self.selected_mutation = mutation
-        cmd.select("to_mutate", mutation.start_residue.get_selection_str())
+        suggestion = self.suggestions[mutation_str]
+        self.selected_suggestion = suggestion
+        cmd.select("to_mutate", suggestion.mutation.start_residue.get_selection_str())
 
         self.status = WizardState.MUTATION_SELECTED
         cmd.refresh_wizard()
@@ -432,44 +339,19 @@ class Antibody_evolution(Wizard):
     def update_binding_affinity(self):
         """Update the binding affinity for the current state of the molecule."""
 
-        affinity = self.evaluate_binding_affinity()
-        print(f"New affinity for state {cmd.get_state()}: {affinity} kcal/mol.")
-        self.attach_affinity_label(affinity, cmd.get_state())
-
-    def evaluate_binding_affinity(self):
-        """Evaluate the binding affinity using Prodigy."""
+        if self.molecule is None:
+            print("Please select a molecule.")
+            return
 
         if self.antibody_chain is None or self.antigen_chains == []:
             print("Please select an antibody and antigen chain.")
             return
 
-        print(f"Evaluating affinity for {self.molecule}, state {cmd.get_state()}.")
-        cmd.save(f"{self.molecule}.pdb", f"{self.molecule}", state=cmd.get_state())
-
-        res = subprocess.run(
-            [
-                "prodigy",
-                f"{self.molecule}.pdb",
-                "--selection",
-                self.antibody_chain,
-                ",".join(self.antigen_chains),
-                "--quiet",
-            ],
-            capture_output=True,
-            text=True,
+        affinity = compute_affinity(
+            self.molecule, self.antibody_chain, self.antigen_chains
         )
-
-        os.remove(f"{self.molecule}.pdb")
-        return self.parse_prodigy_output(res.stdout)
-
-    def parse_prodigy_output(self, output):
-        """Parse the output of Prodigy to get the binding affinity."""
-
-        if output is None or len(output.split()) != 2:
-            print(f"Error: could not parse Prodigy output. Got: {output}")
-            return
-
-        return float(output.split()[1])
+        print(f"New affinity for state {cmd.get_state()}: {affinity} kcal/mol.")
+        self.attach_affinity_label(affinity, cmd.get_state())
 
     def apply_mutation(self):
         """Apply the selected mutation to the molecule."""
@@ -478,19 +360,25 @@ class Antibody_evolution(Wizard):
             print("Please select a molecule.")
             return
 
-        if self.selected_mutation is None:
+        if self.antibody_chain is None or self.antigen_chains == []:
+            print("Please select an antibody and antigen chain.")
+            return
+
+        if self.selected_suggestion is None:
             print("Please select a mutation.")
             return
 
         cmd.wizard("mutagenesis")
         cmd.do("refresh_wizard")
-        cmd.get_wizard().set_mode("%s" % one_to_three(self.selected_mutation.target))
+        cmd.get_wizard().set_mode(
+            "%s" % one_to_three(self.selected_suggestion.mutation.target_resn)
+        )
 
         # The mutation is applied to the last state
         cmd.create("last_state", self.molecule, source_state=-1, target_state=-1)
         cmd.select(
             "tmp",
-            f"last_state and resi {self.selected_mutation.start_residue.id} and chain {self.selected_mutation.start_residue.chain}",
+            f"last_state and resi {self.selected_suggestion.mutation.start_residue.id} and chain {self.selected_suggestion.mutation.start_residue.chain}",
         )
         cmd.get_wizard().do_select("tmp")
         cmd.get_wizard().apply()
@@ -500,18 +388,20 @@ class Antibody_evolution(Wizard):
 
         cmd.frame(cmd.count_states(self.molecule))
 
-        print(f"Applied mutation {self.selected_mutation.to_string()}.")
+        print(f"Applied mutation {self.selected_suggestion.mutation.to_string()}.")
 
         # Remove the applied mutation from the list of suggestions
-        del self.mutations[self.selected_mutation.to_string()]
-        self.selected_mutation = None
-        self.populate_mutation_choices(list(self.mutations.values()))
+        del self.suggestions[self.selected_suggestion.mutation.to_string()]
+        self.selected_suggestion = None
+        self.populate_mutation_choices(list(self.suggestions.values()))
 
         cmd.label(f"{self.molecule}", "''")
         self.highlight_mutations()
 
         # Record the new binding affinity
-        affinity = self.evaluate_binding_affinity()
+        affinity = compute_affinity(
+            self.molecule, self.antibody_chain, self.antigen_chains
+        )
         self.record_history(affinity)
         self.attach_affinity_label(affinity, cmd.count_states(self.molecule))
 
@@ -559,28 +449,27 @@ class Antibody_evolution(Wizard):
                 [3, antigen_chains_label, "antigen_chains"],
             )
 
-            options.append(
+        # Add button to generate suggestions
+        if self.status >= WizardState.ANTIBODY_CHAIN_SELECTED:
+            options.extend(
                 [
-                    2,
-                    "Evaluate Affinity",
-                    "cmd.get_wizard().update_binding_affinity()",
+                    [
+                        2,
+                        "Evaluate Affinity",
+                        "cmd.get_wizard().update_binding_affinity()",
+                    ],
+                    [2, "Generate Suggestions", "cmd.get_wizard().run()"],
                 ],
             )
 
-        # Add button to generate suggestions
-        if self.status >= WizardState.ANTIBODY_CHAIN_SELECTED:
-            options.append(
-                [2, "Run Inference", "cmd.get_wizard().run()"],
-            )
-
         # Add entries to select and apply mutations
-        if self.status >= WizardState.SUGGESTIONS_GENERATED or self.mutations:
-            if self.mutations is None:
+        if self.status >= WizardState.SUGGESTIONS_GENERATED or self.suggestions:
+            if self.suggestions is None:
                 mutations_label = "-"
-            elif self.selected_mutation is None:
+            elif self.selected_suggestion is None:
                 mutations_label = "Select Mutation"
             else:
-                mutations_label = self.selected_mutation.to_string()
+                mutations_label = self.selected_suggestion.mutation.to_string()
 
             options.append(
                 [3, mutations_label, "mutations"],
