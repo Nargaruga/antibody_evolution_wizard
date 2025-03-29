@@ -267,6 +267,9 @@ class Evolution(Wizard):
             self.highlight_mutations()
             print("Undid last mutation")
 
+            self.status = WizardState.SUGGESTIONS_GENERATED
+            cmd.refresh_wizard()
+
     def run(self):
         """Run the wizard to generate suggestions for the selected molecule."""
 
