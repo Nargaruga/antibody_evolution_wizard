@@ -39,7 +39,6 @@ class WizardState(IntEnum):
     GENERATING_SUGGSTIONS = auto()
     SUGGESTIONS_GENERATED = auto()
     MUTATION_SELECTED = auto()
-    MUTATION_APPLIED = auto()
 
 
 class Evolution(Wizard):
@@ -97,8 +96,6 @@ class Evolution(Wizard):
             self.prompt.append(
                 "Apply the mutation %s?" % self.selected_suggestion.mutation.to_string()
             )
-        elif self.status == WizardState.MUTATION_APPLIED:
-            self.prompt.append("Mutation applied successfully.")
 
         return self.prompt
 
@@ -256,19 +253,24 @@ class Evolution(Wizard):
 
         if len(self.history) > 1:
             self.history.pop()
+            print(f"Removed history entry {len(self.history) + 1}.")
             self.binding_affinity = self.history[-1].binding_affinity
             self.suggestions = {
                 s.mutation.to_string(): s for s in self.history[-1].suggestions
             }
             self.selected_suggestion = None
+
             cmd.delete_states(self.molecule, f"{cmd.count_states(self.molecule)}")
-            cmd.delete_states("big_label", f"{cmd.count_states('big_label')}")
+            if "big_label" in cmd.get_names():
+                cmd.delete_states("big_label", f"{cmd.count_states('big_label')}")
             self.populate_mutation_choices(list(self.suggestions.values()))
             self.highlight_mutations()
             print("Undid last mutation")
 
             self.status = WizardState.SUGGESTIONS_GENERATED
             cmd.refresh_wizard()
+        else:
+            print("Nothing to undo.")
 
     def run(self):
         """Run the wizard to generate suggestions for the selected molecule."""
@@ -378,14 +380,18 @@ class Evolution(Wizard):
         )
 
         # The mutation is applied to the last state
-        cmd.create("last_state", self.molecule, source_state=-1, target_state=-1)
+        cmd.create(
+            "last_state",
+            self.molecule,
+            cmd.count_states(self.molecule),
+        )
         cmd.select(
             "tmp",
             f"last_state and resi {self.selected_suggestion.mutation.start_residue.id} and chain {self.selected_suggestion.mutation.start_residue.chain}",
         )
         cmd.get_wizard().do_select("tmp")
         cmd.get_wizard().apply()
-        cmd.join_states(self.molecule, "last_state", mode=-1)
+        cmd.join_states(self.molecule, "last_state", mode=0)
         cmd.delete("last_state")
         cmd.set_wizard()
 
@@ -410,7 +416,7 @@ class Evolution(Wizard):
 
         cmd.refresh_wizard()
 
-        self.status = WizardState.MUTATION_APPLIED
+        self.status = WizardState.SUGGESTIONS_GENERATED
         cmd.refresh_wizard()
 
     def get_panel(self):
