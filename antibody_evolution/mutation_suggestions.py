@@ -49,7 +49,7 @@ def get_mutation_suggestions(
             [
                 "conda",
                 "run",
-                "-n",
+                "--name",
                 "efficient-evolution",
                 "recommend",
                 sequence,
