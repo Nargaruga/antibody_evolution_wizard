@@ -9,6 +9,9 @@ from .residue import Residue
 
 @dataclass
 class Suggestion:
+    """A suggestion for a mutation to apply to an antibody,
+    annotated with the number of times such mutation was suggested."""
+
     mutation: Mutation
     occurrences: int
 
@@ -17,6 +20,8 @@ class Suggestion:
 
     @staticmethod
     def from_EE_output(line: str, molecule: str, chain: str) -> Suggestion:
+        """Parse a line of Efficient Evolution output and return a Suggestion object."""
+
         # Efficient Evolution outputs strings in the form
         # [start residue name][start residue id][target residue name] [occurrences]
         # example: E1M 2
@@ -36,8 +41,9 @@ class Suggestion:
 def get_mutation_suggestions(
     molecule_name: str, sequence: str, models: list[str], antibody_chain: str
 ) -> list[Suggestion]:
-    print(f"Running inference with models {models}")
+    """Get mutation suggestions for the given sequence using the specified models."""
 
+    print(f"Running inference with models {models}")
     try:
         res = subprocess.run(
             [

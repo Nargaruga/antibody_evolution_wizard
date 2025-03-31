@@ -5,20 +5,24 @@ from enum import IntEnum, auto
 import threading
 from pathlib import Path
 from dataclasses import dataclass
+import tempfile
 
 
 from pymol.wizard import Wizard
 from pymol.wizarding import WizardError
 from pymol import cmd
+import pymol2
 
 import yaml
 
-from .antibody_evolution.mutation import Residue, one_to_three
-from .antibody_evolution.mutation_evaluation import compute_affinity
+from .antibody_evolution.mutation_evaluation import (
+    compute_affinity,
+)
 from .antibody_evolution.mutation_suggestions import (
     Suggestion,
     get_mutation_suggestions,
 )
+from .antibody_evolution.residue import Residue, one_to_three
 
 
 @dataclass
@@ -38,6 +42,7 @@ class WizardState(IntEnum):
     ANTIBODY_CHAIN_SELECTED = auto()
     GENERATING_SUGGSTIONS = auto()
     SUGGESTIONS_GENERATED = auto()
+    FINDING_BEST_MUTATION = auto()
     MUTATION_SELECTED = auto()
 
 
@@ -67,7 +72,6 @@ class Evolution(Wizard):
             contents = yaml.load(f, Loader=yaml.FullLoader)
             self.models = contents["models"]
 
-        # TODO download the model
         self.status = WizardState.READY
         cmd.refresh_wizard()
 
@@ -89,6 +93,8 @@ class Evolution(Wizard):
             self.prompt.append("Generating suggestions, please wait...")
         elif self.status == WizardState.SUGGESTIONS_GENERATED:
             self.prompt.append("Select a mutation to apply.")
+        elif self.status == WizardState.FINDING_BEST_MUTATION:
+            self.prompt.append("Finding the best mutation, please wait...")
         elif (
             self.status == WizardState.MUTATION_SELECTED
             and self.selected_suggestion is not None
@@ -142,6 +148,7 @@ class Evolution(Wizard):
 
     def set_molecule(self, molecule):
         """Set the molecule to generate mutation suggestions for."""
+
         self.molecule = molecule
         self.status = WizardState.MOLECULE_SELECTED
         self.populate_chain_choices()
@@ -149,12 +156,14 @@ class Evolution(Wizard):
 
     def set_antibody_chain(self, chain):
         """Set the antibody chain to generate mutation suggestions for."""
+
         self.antibody_chain = chain
         self.status = WizardState.ANTIBODY_CHAIN_SELECTED
         cmd.refresh_wizard()
 
     def set_antigen_chain(self, chain):
         """Set the antigen chain."""
+
         if chain in self.antigen_chains:
             self.antigen_chains.remove(chain)
         else:
@@ -163,8 +172,9 @@ class Evolution(Wizard):
         cmd.refresh_wizard()
 
     def find_mutation_for(self, sel: str):
-        residues = []
+        """Find the mutation suggestion for the selected residue, if any."""
 
+        residues = []
         context = {
             "molecule": self.molecule,
             "residues": residues,
@@ -205,6 +215,8 @@ class Evolution(Wizard):
         cmd.delete(name)
 
     def highlight_mutations(self):
+        """Highlight the residues that have been suggested for mutation."""
+
         if self.molecule is None:
             print("Please select a molecule.")
             return
@@ -221,6 +233,8 @@ class Evolution(Wizard):
             )
 
     def attach_affinity_label(self, affinity, state):
+        """Attach a label with the binding affinity to the molecule."""
+
         if self.molecule is None:
             print("Please select a molecule.")
             return
@@ -247,6 +261,8 @@ class Evolution(Wizard):
         print(f"Recorded history entry {len(self.history)}.")
 
     def undo(self):
+        """Undo the last mutation."""
+
         if self.molecule is None:
             print("Please select a molecule.")
             return
@@ -352,13 +368,15 @@ class Evolution(Wizard):
             print("Please select an antibody and antigen chain.")
             return
 
-        affinity = compute_affinity(
-            self.molecule, self.antibody_chain, self.antigen_chains
-        )
+        with tempfile.NamedTemporaryFile(suffix=".pdb", delete=True) as tmp_file:
+            cmd.save(tmp_file.name, self.molecule)
+            affinity = compute_affinity(
+                tmp_file.name, self.antibody_chain, self.antigen_chains
+            )
         print(f"New affinity for state {cmd.get_state()}: {affinity} kcal/mol.")
         self.attach_affinity_label(affinity, cmd.get_state())
 
-    def apply_mutation(self):
+    def apply_selected_mutation(self):
         """Apply the selected mutation to the molecule."""
 
         if self.molecule is None:
@@ -373,28 +391,27 @@ class Evolution(Wizard):
             print("Please select a mutation.")
             return
 
-        cmd.wizard("mutagenesis")
-        cmd.do("refresh_wizard")
-        cmd.get_wizard().set_mode(
-            "%s" % one_to_three(self.selected_suggestion.mutation.target_resn)
-        )
-
         # The mutation is applied to the last state
         cmd.create(
             "last_state",
             self.molecule,
             cmd.count_states(self.molecule),
         )
-        cmd.select(
-            "tmp",
-            f"last_state and resi {self.selected_suggestion.mutation.start_residue.id} and chain {self.selected_suggestion.mutation.start_residue.chain}",
+
+        cmd.wizard("mutagenesis")
+        cmd.do("refresh_wizard")
+        cmd.get_wizard().do_select(
+            f"/last_state//{self.antibody_chain}/{self.selected_suggestion.mutation.start_residue.id}"
         )
-        cmd.get_wizard().do_select("tmp")
+        cmd.get_wizard().set_mode(
+            one_to_three(self.selected_suggestion.mutation.target_resn)
+        )
+        cmd.frame(1)
         cmd.get_wizard().apply()
-        cmd.join_states(self.molecule, "last_state", mode=0)
-        cmd.delete("last_state")
         cmd.set_wizard()
 
+        cmd.join_states(self.molecule, "last_state", mode=0)
+        cmd.delete("last_state")
         cmd.frame(cmd.count_states(self.molecule))
 
         print(f"Applied mutation {self.selected_suggestion.mutation.to_string()}.")
@@ -408,9 +425,11 @@ class Evolution(Wizard):
         self.highlight_mutations()
 
         # Record the new binding affinity
-        affinity = compute_affinity(
-            self.molecule, self.antibody_chain, self.antigen_chains
-        )
+        with tempfile.NamedTemporaryFile(suffix=".pdb", delete=True) as tmp_file:
+            cmd.save(tmp_file.name, self.molecule)
+            affinity = compute_affinity(
+                tmp_file.name, self.antibody_chain, self.antigen_chains
+            )
         self.record_history(affinity)
         self.attach_affinity_label(affinity, cmd.count_states(self.molecule))
 
@@ -418,6 +437,67 @@ class Evolution(Wizard):
 
         self.status = WizardState.SUGGESTIONS_GENERATED
         cmd.refresh_wizard()
+
+    def select_best_mutation(self):
+        """Select the mutation with the highest impact on the binding affinity."""
+        if self.molecule is None:
+            print("Please select a molecule.")
+            return
+
+        if self.antibody_chain is None or self.antigen_chains == []:
+            print("Please select an antibody and antigen chain.")
+            return
+
+        ddgs = {}
+        with (
+            tempfile.NamedTemporaryFile(suffix=".pdb", delete=True) as molecule_file,
+        ):
+            # TODO use thread to avoid blocking gui
+            cmd.save(molecule_file.name, self.molecule)
+            original_affinity = compute_affinity(
+                molecule_file.name, self.antibody_chain, self.antigen_chains
+            )
+
+            ddgs = {}
+            with pymol2.PyMOL() as bg_pymol:
+                # TODO I'd put this in separate functions, but passing the PyMOL instance object causes
+                for mutation_str, suggestion in self.suggestions.items():
+                    bg_pymol.cmd.load(molecule_file.name, self.molecule)
+
+                    selection_string = f"{self.molecule} and chain {self.antibody_chain} and resi {suggestion.mutation.start_residue.id}"
+                    bg_pymol.cmd.select("tmp", selection_string)
+
+                    bg_pymol.cmd.wizard("mutagenesis")
+                    bg_pymol.cmd.do("refresh_wizard")
+                    bg_pymol.cmd.get_wizard().do_select("tmp")
+                    bg_pymol.cmd.get_wizard().set_mode(
+                        one_to_three(suggestion.mutation.target_resn)
+                    )
+                    bg_pymol.cmd.frame(1)
+                    bg_pymol.cmd.get_wizard().apply()
+                    bg_pymol.cmd.set_wizard()
+
+                    with tempfile.NamedTemporaryFile(
+                        suffix=".pdb", delete=True
+                    ) as mutated_molecule_file:
+                        bg_pymol.cmd.save(mutated_molecule_file.name, self.molecule)
+                        mutated_affinity = compute_affinity(
+                            mutated_molecule_file.name,
+                            self.antibody_chain,
+                            self.antigen_chains,
+                        )
+
+                    ddg = round(mutated_affinity - original_affinity, 2)
+
+                    print(f"Computed ddG for {mutation_str}: {ddg}")
+                    ddgs[mutation_str] = ddg
+
+                    bg_pymol.cmd.delete(self.molecule)
+                    bg_pymol.cmd.delete("tmp")
+
+        best_suggestion = min(ddgs, key=ddgs.get)
+        print(f"Best mutation: {best_suggestion} with ddG of {ddgs[best_suggestion]}.")
+        self.set_suggestion(best_suggestion)
 
     def get_panel(self):
         """Return the menu panel for the wizard."""
@@ -480,12 +560,19 @@ class Evolution(Wizard):
             else:
                 mutations_label = self.selected_suggestion.mutation.to_string()
 
-            options.append(
-                [3, mutations_label, "mutations"],
+            options.extend(
+                [
+                    [
+                        2,
+                        "Select Best Mutation",
+                        "cmd.get_wizard().select_best_mutation()",
+                    ],
+                    [3, mutations_label, "mutations"],
+                ],
             )
         if self.status >= WizardState.MUTATION_SELECTED:
             options.append(
-                [2, "Apply Mutation", "cmd.get_wizard().apply_mutation()"],
+                [2, "Apply Mutation", "cmd.get_wizard().apply_selected_mutation()"],
             )
 
         if len(self.history) > 1:
