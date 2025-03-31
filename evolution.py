@@ -39,8 +39,8 @@ class WizardState(IntEnum):
     INITIALIZING = auto()
     READY = auto()
     MOLECULE_SELECTED = auto()
-    ANTIBODY_CHAIN_SELECTED = auto()
-    GENERATING_SUGGSTIONS = auto()
+    CHAIN_TO_MUTATE_SELECTED = auto()
+    GENERATING_SUGGESTIONS = auto()
     SUGGESTIONS_GENERATED = auto()
     FINDING_BEST_MUTATION = auto()
     MUTATION_SELECTED = auto()
@@ -54,7 +54,8 @@ class Evolution(Wizard):
         self.status = WizardState.INITIALIZING
         self.models = ["esm1b"]
         self.molecule = None
-        self.antibody_chain = None
+        self.chain_to_mutate = None
+        self.antibody_chains = []
         self.antigen_chains = []
         self.suggestions: dict[str, Suggestion] = {}
         self.selected_suggestion = None
@@ -85,11 +86,11 @@ class Evolution(Wizard):
             self.prompt.append("Select a molecule.")
         elif self.status == WizardState.MOLECULE_SELECTED:
             self.prompt.append("Select a chain.")
-        elif self.status == WizardState.ANTIBODY_CHAIN_SELECTED:
+        elif self.status == WizardState.CHAIN_TO_MUTATE_SELECTED:
             self.prompt.append(
-                f"Run to generate mutation suggestions for {self.molecule}, chain {self.antibody_chain}."
+                f"Run to generate mutation suggestions for {self.molecule}, chain {self.chain_to_mutate}."
             )
-        elif self.status == WizardState.GENERATING_SUGGSTIONS:
+        elif self.status == WizardState.GENERATING_SUGGESTIONS:
             self.prompt.append("Generating suggestions, please wait...")
         elif self.status == WizardState.SUGGESTIONS_GENERATED:
             self.prompt.append("Select a mutation to apply.")
@@ -127,10 +128,19 @@ class Evolution(Wizard):
             return
 
         chains = cmd.get_chains(self.molecule)
-        self.menu["antibody_chain"] = [[2, "Antibody Chain", ""]]
+        self.menu["chain_to_mutate"] = [[2, "Chain to Mutate", ""]]
+        self.menu["antibody_chains"] = [[2, "Antibody Chains", ""]]
         self.menu["antigen_chains"] = [[2, "Antigen Chains", ""]]
         for c in chains:
-            self.menu["antibody_chain"].append(
+            self.menu["chain_to_mutate"].append(
+                [
+                    1,
+                    c,
+                    'cmd.get_wizard().set_chain_to_mutate("' + c + '")',
+                ]
+            )
+
+            self.menu["antibody_chains"].append(
                 [
                     1,
                     c,
@@ -154,11 +164,21 @@ class Evolution(Wizard):
         self.populate_chain_choices()
         cmd.refresh_wizard()
 
-    def set_antibody_chain(self, chain):
-        """Set the antibody chain to generate mutation suggestions for."""
+    def set_chain_to_mutate(self, chain):
+        """Set the chain to mutate."""
 
-        self.antibody_chain = chain
-        self.status = WizardState.ANTIBODY_CHAIN_SELECTED
+        self.chain_to_mutate = chain
+        self.status = WizardState.CHAIN_TO_MUTATE_SELECTED
+        cmd.refresh_wizard()
+
+    def set_antibody_chain(self, chain):
+        """Set the antibody chain."""
+
+        if chain in self.antibody_chains:
+            self.antibody_chains.remove(chain)
+        else:
+            self.antibody_chains.append(chain)
+
         cmd.refresh_wizard()
 
     def set_antigen_chain(self, chain):
@@ -168,7 +188,7 @@ class Evolution(Wizard):
             self.antigen_chains.remove(chain)
         else:
             self.antigen_chains.append(chain)
-        self.status = WizardState.ANTIBODY_CHAIN_SELECTED
+
         cmd.refresh_wizard()
 
     def find_mutation_for(self, sel: str):
@@ -295,7 +315,7 @@ class Evolution(Wizard):
             print("Please select a molecule.")
             return
 
-        self.status = WizardState.GENERATING_SUGGSTIONS
+        self.status = WizardState.GENERATING_SUGGESTIONS
         cmd.refresh_wizard()
 
         # Generate suggestions on a separate thread
@@ -309,15 +329,17 @@ class Evolution(Wizard):
             print("Please select a molecule.")
             return
 
-        if self.antibody_chain is None:
+        if self.chain_to_mutate is None:
             print("Please select a chain.")
             return
 
-        fasta_str = cmd.get_fastastr(f"{self.molecule} and chain {self.antibody_chain}")
+        fasta_str = cmd.get_fastastr(
+            f"{self.molecule} and chain {self.chain_to_mutate}"
+        )
         sequence = fasta_str.split("\n")[1]
 
         annotated_mutations = get_mutation_suggestions(
-            self.molecule, sequence, self.models, self.antibody_chain
+            self.molecule, sequence, self.models, self.chain_to_mutate
         )
 
         self.populate_mutation_choices(annotated_mutations)
@@ -364,14 +386,14 @@ class Evolution(Wizard):
             print("Please select a molecule.")
             return
 
-        if self.antibody_chain is None or self.antigen_chains == []:
+        if self.antibody_chains is None or self.antigen_chains == []:
             print("Please select an antibody and antigen chain.")
             return
 
         with tempfile.NamedTemporaryFile(suffix=".pdb", delete=True) as tmp_file:
             cmd.save(tmp_file.name, self.molecule)
             affinity = compute_affinity(
-                tmp_file.name, self.antibody_chain, self.antigen_chains
+                tmp_file.name, self.antibody_chains, self.antigen_chains
             )
         print(f"New affinity for state {cmd.get_state()}: {affinity} kcal/mol.")
         self.attach_affinity_label(affinity, cmd.get_state())
@@ -383,7 +405,7 @@ class Evolution(Wizard):
             print("Please select a molecule.")
             return
 
-        if self.antibody_chain is None or self.antigen_chains == []:
+        if self.antibody_chains is None or self.antigen_chains == []:
             print("Please select an antibody and antigen chain.")
             return
 
@@ -401,7 +423,7 @@ class Evolution(Wizard):
         cmd.wizard("mutagenesis")
         cmd.do("refresh_wizard")
         cmd.get_wizard().do_select(
-            f"/last_state//{self.antibody_chain}/{self.selected_suggestion.mutation.start_residue.id}"
+            f"/last_state//{self.chain_to_mutate}/{self.selected_suggestion.mutation.start_residue.id}"
         )
         cmd.get_wizard().set_mode(
             one_to_three(self.selected_suggestion.mutation.target_resn)
@@ -428,7 +450,7 @@ class Evolution(Wizard):
         with tempfile.NamedTemporaryFile(suffix=".pdb", delete=True) as tmp_file:
             cmd.save(tmp_file.name, self.molecule)
             affinity = compute_affinity(
-                tmp_file.name, self.antibody_chain, self.antigen_chains
+                tmp_file.name, self.antibody_chains, self.antigen_chains
             )
         self.record_history(affinity)
         self.attach_affinity_label(affinity, cmd.count_states(self.molecule))
@@ -444,7 +466,7 @@ class Evolution(Wizard):
             print("Please select a molecule.")
             return
 
-        if self.antibody_chain is None or self.antigen_chains == []:
+        if self.antibody_chains is None or self.antigen_chains == []:
             print("Please select an antibody and antigen chain.")
             return
 
@@ -455,7 +477,7 @@ class Evolution(Wizard):
             # TODO use thread to avoid blocking gui
             cmd.save(molecule_file.name, self.molecule)
             original_affinity = compute_affinity(
-                molecule_file.name, self.antibody_chain, self.antigen_chains
+                molecule_file.name, self.antibody_chains, self.antigen_chains
             )
 
             ddgs = {}
@@ -464,7 +486,7 @@ class Evolution(Wizard):
                 for mutation_str, suggestion in self.suggestions.items():
                     bg_pymol.cmd.load(molecule_file.name, self.molecule)
 
-                    selection_string = f"{self.molecule} and chain {self.antibody_chain} and resi {suggestion.mutation.start_residue.id}"
+                    selection_string = f"{self.molecule} and chain {self.chain_to_mutate} and resi {suggestion.mutation.start_residue.id}"
                     bg_pymol.cmd.select("tmp", selection_string)
 
                     bg_pymol.cmd.wizard("mutagenesis")
@@ -483,7 +505,7 @@ class Evolution(Wizard):
                         bg_pymol.cmd.save(mutated_molecule_file.name, self.molecule)
                         mutated_affinity = compute_affinity(
                             mutated_molecule_file.name,
-                            self.antibody_chain,
+                            self.antibody_chains,
                             self.antigen_chains,
                         )
 
@@ -520,13 +542,22 @@ class Evolution(Wizard):
 
         # Add entries to select chains and evaluate affinity
         if self.status >= WizardState.MOLECULE_SELECTED:
-            antibody_chain_label = "Antibody Chain: "
-            if self.antibody_chain:
-                antibody_chain_label += self.antibody_chain
+            chain_to_mutate_label = "Chain to Mutate: "
+            if self.chain_to_mutate:
+                chain_to_mutate_label += self.chain_to_mutate
             else:
-                antibody_chain_label += "None"
+                chain_to_mutate_label += "None"
             options.append(
-                [3, antibody_chain_label, "antibody_chain"],
+                [3, chain_to_mutate_label, "chain_to_mutate"],
+            )
+
+            antibody_chains_label = "Antibody Chains: "
+            if self.antibody_chains:
+                antibody_chains_label += ", ".join(self.antibody_chains)
+            else:
+                antibody_chains_label += "None"
+            options.append(
+                [3, antibody_chains_label, "antibody_chains"],
             )
 
             antigen_chains_label = "Antigen Chains: "
@@ -538,17 +569,19 @@ class Evolution(Wizard):
                 [3, antigen_chains_label, "antigen_chains"],
             )
 
-        # Add button to generate suggestions
-        if self.status >= WizardState.ANTIBODY_CHAIN_SELECTED:
-            options.extend(
-                [
+            if self.antibody_chains and self.antigen_chains:
+                options.append(
                     [
                         2,
                         "Evaluate Affinity",
                         "cmd.get_wizard().update_binding_affinity()",
-                    ],
-                    [2, "Generate Suggestions", "cmd.get_wizard().run()"],
-                ],
+                    ]
+                )
+
+        # Add button to generate suggestions
+        if self.status >= WizardState.CHAIN_TO_MUTATE_SELECTED:
+            options.append(
+                [2, "Generate Suggestions", "cmd.get_wizard().run()"],
             )
 
         # Add entries to select and apply mutations

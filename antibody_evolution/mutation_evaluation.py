@@ -3,7 +3,7 @@ import subprocess
 
 
 def compute_affinity(
-    molecule_file: str, antibody_chain: str, antigen_chains: list[str]
+    molecule_file: str, antibody_chains: list[str], antigen_chains: list[str]
 ) -> float:
     """Compute the binding affinity of the given antibody-antigen complex."""
 
@@ -11,7 +11,7 @@ def compute_affinity(
         "prodigy",
         molecule_file,
         "--selection",
-        antibody_chain,
+        ",".join(antibody_chains),
         ",".join(antigen_chains),
         "--quiet",
     ]

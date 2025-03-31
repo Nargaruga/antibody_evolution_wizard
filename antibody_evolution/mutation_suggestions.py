@@ -39,7 +39,7 @@ class Suggestion:
 
 
 def get_mutation_suggestions(
-    molecule_name: str, sequence: str, models: list[str], antibody_chain: str
+    molecule_name: str, sequence: str, models: list[str], chain: str
 ) -> list[Suggestion]:
     """Get mutation suggestions for the given sequence using the specified models."""
 
@@ -68,7 +68,7 @@ def get_mutation_suggestions(
     for line in res.stdout.strip().splitlines():
         if line:
             suggestions.append(
-                Suggestion.from_EE_output(line, molecule_name, antibody_chain)
+                Suggestion.from_EE_output(line, molecule_name, chain)
             )
 
     return suggestions
