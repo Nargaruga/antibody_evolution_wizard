@@ -15,4 +15,4 @@ dependencies:
   - libnetcdf
   - pip
   - pip:
-    - prodigy-prot==2.2.4
+    - prodigy-prot==2.2.5
