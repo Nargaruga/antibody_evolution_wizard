@@ -390,11 +390,16 @@ class Evolution(Wizard):
             print("Please select an antibody and antigen chain.")
             return
 
-        with tempfile.NamedTemporaryFile(suffix=".pdb", delete=True) as tmp_file:
-            cmd.save(tmp_file.name, self.molecule)
-            affinity = compute_affinity(
-                tmp_file.name, self.antibody_chains, self.antigen_chains
-            )
+        prodigy_outfile_handle, prodigy_outfile_path = tempfile.mkstemp(suffix=".pdb")
+
+        cmd.save(prodigy_outfile_path, self.molecule)
+        affinity = compute_affinity(
+            prodigy_outfile_path, self.antibody_chains, self.antigen_chains
+        )
+
+        os.close(prodigy_outfile_handle)
+        os.remove(prodigy_outfile_path)
+
         print(f"New affinity for state {cmd.get_state()}: {affinity} kcal/mol.")
         self.attach_affinity_label(affinity, cmd.get_state())
 
