@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from dataclasses import dataclass
 
@@ -43,32 +44,27 @@ def get_mutation_suggestions(
 ) -> list[Suggestion]:
     """Get mutation suggestions for the given sequence using the specified models."""
 
+    if os.name == "nt":
+        prefix = ["docker", "run", "--rm", "efficient-evolution"]
+    else:
+        prefix = ["conda", "run", "-n", "efficient-evolution", "recommend"]
+
     print(f"Running inference with models {models}")
-    try:
-        res = subprocess.run(
-            [
-                "conda",
-                "run",
-                "--name",
-                "efficient-evolution",
-                "recommend",
-                sequence,
-                "--model-names",
-            ]
-            + models,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except subprocess.CalledProcessError as e:
-        print(f"Something went wrong while calling Efficient Evolution: {e}")
-        exit(-1)
+    res = subprocess.run(
+        prefix
+        + [
+            sequence,
+            "--model-names",
+        ]
+        + models,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
     suggestions = []
     for line in res.stdout.strip().splitlines():
         if line:
-            suggestions.append(
-                Suggestion.from_EE_output(line, molecule_name, chain)
-            )
+            suggestions.append(Suggestion.from_EE_output(line, molecule_name, chain))
 
     return suggestions

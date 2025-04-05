@@ -1,4 +1,3 @@
-import os
 import subprocess
 
 
@@ -30,10 +29,5 @@ def compute_affinity(
     if res.stdout is None or len(res.stdout.split()) != 2:
         print(f"Error: could not parse Prodigy output. Got: {res.stdout}")
         exit(-1)
-
-        try:
-            os.remove(molecule_file)
-        except FileNotFoundError:
-            pass
 
     return round(float(res.stdout.split()[1]), 2)
