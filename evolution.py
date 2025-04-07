@@ -6,6 +6,7 @@ import threading
 from pathlib import Path
 from dataclasses import dataclass
 import tempfile
+import pkgutil
 
 
 from pymol.wizard import Wizard
@@ -15,14 +16,14 @@ import pymol2
 
 import yaml
 
-from .antibody_evolution.mutation_evaluation import (
+from antibody_evolution.mutation_evaluation import (
     compute_affinity,
 )
-from .antibody_evolution.mutation_suggestions import (
+from antibody_evolution.mutation_suggestions import (
     Suggestion,
     get_mutation_suggestions,
 )
-from .antibody_evolution.residue import Residue, one_to_three
+from antibody_evolution.residue import Residue, one_to_three
 
 
 @dataclass
@@ -67,11 +68,15 @@ class Evolution(Wizard):
         initializer_thread.start()
 
     def load_model(self):
-        # check which models were requested
-        location = Path(__file__).parent
-        with open(os.path.join(location, "config", "models.yml")) as f:
-            contents = yaml.load(f, Loader=yaml.FullLoader)
-            self.models = contents["models"]
+        raw_yaml = pkgutil.get_data(
+            "antibody_evolution", os.path.join("config", "models.yaml")
+        )
+        if raw_yaml is None:
+            raise WizardError("Could not load models file.")
+
+        yaml_str = raw_yaml.decode("utf-8")
+        models = yaml.safe_load(yaml_str)
+        self.models = models["models"]
 
         self.status = WizardState.READY
         cmd.refresh_wizard()
