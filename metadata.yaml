@@ -3,13 +3,9 @@ menu_entry: "Antibody Evolution"
 default_env: pymol_antibody_evo
 use_vr: true
 
-python_version: 3.9
-pymol_version: 3.3.0
+python_version: 3.10
+pymol_version: master
 openvr_version: 1.0.17
-
-extra_dirs:
-  - [antibody_evolution, antibody_evolution]
-  - [config, config]
 
 pre_script: "scripts/installation/pre_install.py"
 post_script: ""
