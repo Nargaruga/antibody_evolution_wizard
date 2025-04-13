@@ -4,9 +4,11 @@
 *.egg-info
 *build
 
+*.txt
 *.cif
 *.pdb
 *.pml
+*.csv
 
 installation_data.json
 tmp/
