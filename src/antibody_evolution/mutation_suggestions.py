@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from .mutation import Mutation
 from .residue import Residue
 
+from pymol import cmd
+
 
 @dataclass
 class Suggestion:
@@ -39,8 +41,41 @@ class Suggestion:
         )
 
 
+def is_residue_valid(molecule: str, chain: str, resi: int):
+    cmd.select(
+        "temp",
+        f"byres ({molecule} and chain {chain} and resi {resi}) and name CA",
+    )
+
+    if cmd.count_atoms("temp") <= 1:
+        return False
+
+    return True
+
+
+def filter_suggestions(suggestions: list[Suggestion]) -> list[Suggestion]:
+    """Filter out suggestions on incomplete residues."""
+
+    filtered_suggestions = []
+    for suggestion in suggestions:
+        if is_residue_valid(
+            suggestion.mutation.start_residue.molecule,
+            suggestion.mutation.start_residue.chain,
+            suggestion.mutation.start_residue.id,
+        ):
+            filtered_suggestions.append(suggestion)
+        else:
+            print(f"Filtered out mutation for invalid residue: {suggestion}")
+
+    return filtered_suggestions
+
+
 def get_mutation_suggestions(
-    molecule_name: str, sequence: str, models: list[str], chain: str
+    molecule_name: str,
+    sequence: str,
+    ids: list[int],
+    models: list[str],
+    chain: str,
 ) -> list[Suggestion]:
     """Get mutation suggestions for the given sequence using the specified models."""
 
@@ -65,6 +100,11 @@ def get_mutation_suggestions(
     suggestions = []
     for line in res.stdout.strip().splitlines():
         if line:
-            suggestions.append(Suggestion.from_EE_output(line, molecule_name, chain))
+            suggestion = Suggestion.from_EE_output(line, molecule_name, chain)
+            print(f"Suggestion: {suggestion.mutation.to_string()}")
+            relative_id = suggestion.mutation.start_residue.id - 1
+            suggestion.mutation.start_residue.id = ids[relative_id]
+            print(f"Relative ID: {relative_id}, Absolute ID: {ids[relative_id]}")
+            suggestions.append(suggestion)
 
     return suggestions

@@ -22,6 +22,7 @@ from antibody_evolution.mutation_evaluation import (
 from antibody_evolution.mutation_suggestions import (
     Suggestion,
     get_mutation_suggestions,
+    is_residue_valid,
 )
 from antibody_evolution.residue import Residue, one_to_three
 
@@ -338,16 +339,35 @@ class Evolution(Wizard):
             print("Please select a chain.")
             return
 
-        fasta_str = cmd.get_fastastr(
-            f"{self.molecule} and chain {self.chain_to_mutate}"
+        annotated_residues = []
+        cmd.iterate(
+            f"{self.molecule} and chain {self.chain_to_mutate} and name CA",
+            "annotated_residues.append((oneletter, resi))",
+            space=locals(),
         )
-        sequence = fasta_str.split("\n")[1]
+
+        sequence = []
+        ids = []
+        for oneletter, resi in annotated_residues:
+            sequence.append(oneletter)
+            ids.append(resi)
 
         annotated_mutations = get_mutation_suggestions(
-            self.molecule, sequence, self.models, self.chain_to_mutate
+            self.molecule, "".join(sequence), ids, self.models, self.chain_to_mutate
         )
 
-        self.populate_mutation_choices(annotated_mutations)
+        filtered_mutations = []
+        for suggestion in annotated_mutations:
+            if is_residue_valid(
+                self.molecule,
+                self.chain_to_mutate,
+                suggestion.mutation.start_residue.id,
+            ):
+                filtered_mutations.append(suggestion)
+            else:
+                print(f"Filtered out mutation for invalid residue: {suggestion}")
+
+        self.populate_mutation_choices(filtered_mutations)
         self.highlight_mutations()
 
         if self.history == []:
@@ -465,8 +485,6 @@ class Evolution(Wizard):
         self.record_history(affinity)
         self.attach_affinity_label(affinity, cmd.count_states(self.molecule))
 
-        cmd.refresh_wizard()
-
         self.status = WizardState.SUGGESTIONS_GENERATED
         cmd.refresh_wizard()
 
@@ -492,7 +510,7 @@ class Evolution(Wizard):
 
             ddgs = {}
             with pymol2.PyMOL() as bg_pymol:
-                # TODO I'd put this in separate functions, but passing the PyMOL instance object causes
+                # TODO I'd put this in separate functions, but passing the PyMOL instance object causes problems
                 for mutation_str, suggestion in self.suggestions.items():
                     bg_pymol.cmd.load(molecule_file.name, self.molecule)
 
