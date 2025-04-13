@@ -18,6 +18,7 @@ import yaml
 
 from antibody_evolution.mutation_evaluation import (
     compute_affinity,
+    AffinityComputationError,
 )
 from antibody_evolution.mutation_suggestions import (
     Suggestion,
@@ -418,12 +419,16 @@ class Evolution(Wizard):
         prodigy_outfile_handle, prodigy_outfile_path = tempfile.mkstemp(suffix=".pdb")
 
         cmd.save(prodigy_outfile_path, self.molecule)
-        affinity = compute_affinity(
-            prodigy_outfile_path, self.antibody_chains, self.antigen_chains
-        )
-
-        os.close(prodigy_outfile_handle)
-        os.remove(prodigy_outfile_path)
+        try:
+            affinity = compute_affinity(
+                prodigy_outfile_path, self.antibody_chains, self.antigen_chains
+            )
+        except AffinityComputationError as e:
+            print(f"Error computing affinity: {e}")
+            return
+        finally:
+            os.close(prodigy_outfile_handle)
+            os.remove(prodigy_outfile_path)
 
         print(f"New affinity for state {cmd.get_state()}: {affinity} kcal/mol.")
         self.attach_affinity_label(affinity, cmd.get_state())
