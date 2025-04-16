@@ -36,17 +36,19 @@ class HistoryEntry:
     suggestions: list[Suggestion]
 
 
-class WizardState(IntEnum):
-    """The possible states of the wizard."""
-
+class WizardInputState(IntEnum):
     INITIALIZING = auto()
     READY = auto()
     MOLECULE_SELECTED = auto()
     CHAIN_TO_MUTATE_SELECTED = auto()
-    GENERATING_SUGGESTIONS = auto()
-    SUGGESTIONS_GENERATED = auto()
-    FINDING_BEST_MUTATION = auto()
+    MUTATIONS_READY = auto()
     MUTATION_SELECTED = auto()
+
+
+class WizardTaskState(IntEnum):
+    IDLE = auto()
+    GENERATING_SUGGESTIONS = auto()
+    FINDING_BEST_MUTATION = auto()
 
 
 class Evolution(Wizard):
@@ -54,7 +56,9 @@ class Evolution(Wizard):
 
     def __init__(self, _self=cmd):
         Wizard.__init__(self, _self)
-        self.status = WizardState.INITIALIZING
+        self.input_state = WizardInputState.INITIALIZING
+        self.task_state = WizardTaskState.IDLE
+        cmd.refresh_wizard()
         self.models = ["esm1b"]
         self.molecule = None
         self.chain_to_mutate = None
@@ -69,6 +73,152 @@ class Evolution(Wizard):
         initializer_thread = threading.Thread(target=self.load_model)
         initializer_thread.start()
 
+    def get_prompt(self):  # type: ignore
+        """Return the prompt for the current state of the wizard."""
+
+        prompt = []
+
+        if self.input_state == WizardInputState.READY:
+            prompt.append("Select a molecule.")
+        elif self.input_state == WizardInputState.MOLECULE_SELECTED:
+            prompt.append("Select a chain.")
+        elif self.input_state == WizardInputState.CHAIN_TO_MUTATE_SELECTED:
+            prompt.append(
+                f"Run to generate mutation suggestions for {self.molecule}, chain {self.chain_to_mutate}."
+            )
+        elif self.input_state == WizardInputState.MUTATIONS_READY:
+            prompt.append("Select a mutation to apply.")
+
+        elif (
+            self.input_state == WizardInputState.MUTATION_SELECTED
+            and self.selected_suggestion is not None
+        ):
+            prompt.append(
+                "Apply the mutation %s?" % self.selected_suggestion.mutation.to_string()
+            )
+
+        if self.task_state == WizardTaskState.GENERATING_SUGGESTIONS:
+            prompt.append("Generating suggestions, please wait...")
+        elif self.task_state == WizardTaskState.FINDING_BEST_MUTATION:
+            prompt.append("Finding the best mutation, please wait...")
+
+        return prompt
+
+    def get_panel(self):  # type: ignore
+        """Return the menu panel for the wizard."""
+
+        # Title
+        options = [
+            [1, "Antibody Evolution", ""],
+        ]
+
+        # Choose molecule
+        if self.input_state >= WizardInputState.READY:
+            if self.molecule is None:
+                molecule_label = "Choose molecule"
+            else:
+                molecule_label = self.molecule
+
+            options.append(
+                [3, molecule_label, "molecule"],
+            )
+
+        # Add entries to select chains and evaluate affinity
+        if self.input_state >= WizardInputState.MOLECULE_SELECTED:
+            chain_to_mutate_label = "Chain to Mutate: "
+            if self.chain_to_mutate:
+                chain_to_mutate_label += self.chain_to_mutate
+            else:
+                chain_to_mutate_label += "None"
+            options.append(
+                [3, chain_to_mutate_label, "chain_to_mutate"],
+            )
+
+            antibody_chains_label = "Antibody Chains: "
+            if self.antibody_chains:
+                antibody_chains_label += ", ".join(self.antibody_chains)
+            else:
+                antibody_chains_label += "None"
+            options.append(
+                [3, antibody_chains_label, "antibody_chains"],
+            )
+
+            antigen_chains_label = "Antigen Chains: "
+            if self.antigen_chains:
+                antigen_chains_label += ", ".join(self.antigen_chains)
+            else:
+                antigen_chains_label += "None"
+            options.append(
+                [3, antigen_chains_label, "antigen_chains"],
+            )
+
+            if self.antibody_chains and self.antigen_chains:
+                options.append(
+                    [
+                        2,
+                        "Evaluate Affinity",
+                        "cmd.get_wizard().update_binding_affinity()",
+                    ]
+                )
+
+        # Add button to generate suggestions
+        if self.input_state >= WizardInputState.CHAIN_TO_MUTATE_SELECTED:
+            options.append(
+                [2, "Generate Suggestions", "cmd.get_wizard().run()"],
+            )
+
+        # Add entries to select and apply mutations
+        if self.input_state >= WizardInputState.MUTATIONS_READY:
+            if self.suggestions is None:
+                mutations_label = "-"
+            elif self.selected_suggestion is None:
+                mutations_label = "Select Mutation"
+            else:
+                mutations_label = self.selected_suggestion.mutation.to_string()
+
+            options.extend(
+                [
+                    [
+                        2,
+                        "Select Best Mutation",
+                        "cmd.get_wizard().select_best_mutation()",
+                    ],
+                    [3, mutations_label, "mutations"],
+                ],
+            )
+        if self.input_state >= WizardInputState.MUTATION_SELECTED:
+            options.append(
+                [2, "Apply Mutation", "cmd.get_wizard().apply_selected_mutation()"],
+            )
+
+        if len(self.history) > 1:
+            options.append(
+                [2, "Undo", "cmd.get_wizard().undo()"],
+            )
+
+        options.append([2, "Dismiss", "cmd.set_wizard()"])
+
+        return options
+
+    def update_input_state(self):
+        """Update the state of the wizard based on the current inputs."""
+
+        if self.molecule:
+            self.input_state = WizardInputState.MOLECULE_SELECTED
+        else:
+            self.input_state = WizardInputState.READY
+
+        if self.chain_to_mutate:
+            self.input_state = WizardInputState.CHAIN_TO_MUTATE_SELECTED
+
+        if self.suggestions:
+            self.input_state = WizardInputState.MUTATIONS_READY
+
+        if self.selected_suggestion:
+            self.input_state = WizardInputState.MUTATION_SELECTED
+
+        cmd.refresh_wizard()
+
     def load_model(self):
         raw_yaml = pkgutil.get_data(
             "antibody_evolution", os.path.join("config", "models.yaml")
@@ -80,38 +230,8 @@ class Evolution(Wizard):
         models = yaml.safe_load(yaml_str)
         self.models = models["models"]
 
-        self.status = WizardState.READY
+        self.input_state = WizardInputState.READY
         cmd.refresh_wizard()
-
-    def get_prompt(self):  # type: ignore
-        """Return the prompt for the current state of the wizard."""
-
-        self.prompt = []
-        if self.status == WizardState.INITIALIZING:
-            self.prompt.append("Initializing, please wait...")
-        elif self.status == WizardState.READY:
-            self.prompt.append("Select a molecule.")
-        elif self.status == WizardState.MOLECULE_SELECTED:
-            self.prompt.append("Select a chain.")
-        elif self.status == WizardState.CHAIN_TO_MUTATE_SELECTED:
-            self.prompt.append(
-                f"Run to generate mutation suggestions for {self.molecule}, chain {self.chain_to_mutate}."
-            )
-        elif self.status == WizardState.GENERATING_SUGGESTIONS:
-            self.prompt.append("Generating suggestions, please wait...")
-        elif self.status == WizardState.SUGGESTIONS_GENERATED:
-            self.prompt.append("Select a mutation to apply.")
-        elif self.status == WizardState.FINDING_BEST_MUTATION:
-            self.prompt.append("Finding the best mutation, please wait...")
-        elif (
-            self.status == WizardState.MUTATION_SELECTED
-            and self.selected_suggestion is not None
-        ):
-            self.prompt.append(
-                "Apply the mutation %s?" % self.selected_suggestion.mutation.to_string()
-            )
-
-        return self.prompt
 
     def populate_molecule_choices(self):
         """Populate the menu with the available molecules in the session."""
@@ -167,16 +287,14 @@ class Evolution(Wizard):
         """Set the molecule to generate mutation suggestions for."""
 
         self.molecule = molecule
-        self.status = WizardState.MOLECULE_SELECTED
         self.populate_chain_choices()
-        cmd.refresh_wizard()
+        self.update_input_state()
 
     def set_chain_to_mutate(self, chain):
         """Set the chain to mutate."""
 
         self.chain_to_mutate = chain
-        self.status = WizardState.CHAIN_TO_MUTATE_SELECTED
-        cmd.refresh_wizard()
+        self.update_input_state()
 
     def set_antibody_chain(self, chain):
         """Set the antibody chain."""
@@ -186,7 +304,7 @@ class Evolution(Wizard):
         else:
             self.antibody_chains.append(chain)
 
-        cmd.refresh_wizard()
+        self.update_input_state()
 
     def set_antigen_chain(self, chain):
         """Set the antigen chain."""
@@ -196,7 +314,7 @@ class Evolution(Wizard):
         else:
             self.antigen_chains.append(chain)
 
-        cmd.refresh_wizard()
+        self.update_input_state()
 
     def find_mutation_for(self, sel: str):
         """Find the mutation suggestion for the selected residue, if any."""
@@ -310,7 +428,7 @@ class Evolution(Wizard):
             self.highlight_mutations()
             print("Undid last mutation")
 
-            self.status = WizardState.SUGGESTIONS_GENERATED
+            self.input_state = WizardState.SUGGESTIONS_GENERATED
             cmd.refresh_wizard()
         else:
             print("Nothing to undo.")
@@ -322,11 +440,22 @@ class Evolution(Wizard):
             print("Please select a molecule.")
             return
 
-        self.status = WizardState.GENERATING_SUGGESTIONS
-        cmd.refresh_wizard()
+        def aux():
+            self.input_state = WizardTaskState.GENERATING_SUGGESTIONS
+            cmd.refresh_wizard()
+
+            try:
+                self.suggest_mutations()
+                self.input_state = WizardInputState.MUTATIONS_READY
+            except Exception as e:
+                print(f"Error generating suggestions: {e}")
+                return
+            finally:
+                self.task_state = WizardTaskState.IDLE
+                cmd.refresh_wizard()
 
         # Generate suggestions on a separate thread
-        worker_thread = threading.Thread(target=self.suggest_mutations)
+        worker_thread = threading.Thread(target=aux)
         worker_thread.start()
 
     def suggest_mutations(self):
@@ -376,9 +505,6 @@ class Evolution(Wizard):
 
         print("Select a mutation.")
 
-        self.status = WizardState.SUGGESTIONS_GENERATED
-        cmd.refresh_wizard()
-
     def populate_mutation_choices(self, suggestions: list[Suggestion]):
         """Populate the menu with the generated mutation suggestions."""
 
@@ -402,8 +528,7 @@ class Evolution(Wizard):
         self.selected_suggestion = suggestion
         cmd.select("to_mutate", suggestion.mutation.start_residue.get_selection_str())
 
-        self.status = WizardState.MUTATION_SELECTED
-        cmd.refresh_wizard()
+        self.update_input_state()
 
     def update_binding_affinity(self):
         """Update the binding affinity for the current state of the molecule."""
@@ -490,8 +615,7 @@ class Evolution(Wizard):
         self.record_history(affinity)
         self.attach_affinity_label(affinity, cmd.count_states(self.molecule))
 
-        self.status = WizardState.SUGGESTIONS_GENERATED
-        cmd.refresh_wizard()
+        self.update_input_state()
 
     def select_best_mutation(self):
         """Select the mutation with the highest impact on the binding affinity."""
@@ -502,6 +626,8 @@ class Evolution(Wizard):
         if self.antibody_chains is None or self.antigen_chains == []:
             print("Please select an antibody and antigen chain.")
             return
+
+        self.task_state = WizardTaskState.FINDING_BEST_MUTATION
 
         ddgs = {}
         with (
@@ -554,98 +680,5 @@ class Evolution(Wizard):
         print(f"Best mutation: {best_suggestion} with ddG of {ddgs[best_suggestion]}.")
         self.set_suggestion(best_suggestion)
 
-    def get_panel(self):
-        """Return the menu panel for the wizard."""
-
-        # Title
-        options = [
-            [1, "Antibody Evolution", ""],
-        ]
-
-        # Choose molecule
-        if self.status >= WizardState.READY:
-            if self.molecule is None:
-                molecule_label = "Choose molecule"
-            else:
-                molecule_label = self.molecule
-
-            options.append(
-                [3, molecule_label, "molecule"],
-            )
-
-        # Add entries to select chains and evaluate affinity
-        if self.status >= WizardState.MOLECULE_SELECTED:
-            chain_to_mutate_label = "Chain to Mutate: "
-            if self.chain_to_mutate:
-                chain_to_mutate_label += self.chain_to_mutate
-            else:
-                chain_to_mutate_label += "None"
-            options.append(
-                [3, chain_to_mutate_label, "chain_to_mutate"],
-            )
-
-            antibody_chains_label = "Antibody Chains: "
-            if self.antibody_chains:
-                antibody_chains_label += ", ".join(self.antibody_chains)
-            else:
-                antibody_chains_label += "None"
-            options.append(
-                [3, antibody_chains_label, "antibody_chains"],
-            )
-
-            antigen_chains_label = "Antigen Chains: "
-            if self.antigen_chains:
-                antigen_chains_label += ", ".join(self.antigen_chains)
-            else:
-                antigen_chains_label += "None"
-            options.append(
-                [3, antigen_chains_label, "antigen_chains"],
-            )
-
-            if self.antibody_chains and self.antigen_chains:
-                options.append(
-                    [
-                        2,
-                        "Evaluate Affinity",
-                        "cmd.get_wizard().update_binding_affinity()",
-                    ]
-                )
-
-        # Add button to generate suggestions
-        if self.status >= WizardState.CHAIN_TO_MUTATE_SELECTED:
-            options.append(
-                [2, "Generate Suggestions", "cmd.get_wizard().run()"],
-            )
-
-        # Add entries to select and apply mutations
-        if self.status >= WizardState.SUGGESTIONS_GENERATED or self.suggestions:
-            if self.suggestions is None:
-                mutations_label = "-"
-            elif self.selected_suggestion is None:
-                mutations_label = "Select Mutation"
-            else:
-                mutations_label = self.selected_suggestion.mutation.to_string()
-
-            options.extend(
-                [
-                    [
-                        2,
-                        "Select Best Mutation",
-                        "cmd.get_wizard().select_best_mutation()",
-                    ],
-                    [3, mutations_label, "mutations"],
-                ],
-            )
-        if self.status >= WizardState.MUTATION_SELECTED:
-            options.append(
-                [2, "Apply Mutation", "cmd.get_wizard().apply_selected_mutation()"],
-            )
-
-        if len(self.history) > 1:
-            options.append(
-                [2, "Undo", "cmd.get_wizard().undo()"],
-            )
-
-        options.append([2, "Dismiss", "cmd.set_wizard()"])
-
-        return options
+        self.task_state = WizardTaskState.IDLE
+        self.update_input_state()
