@@ -5,3 +5,4 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "antibody_evolution"
 version = "0.1.0"
+dependencies = ["prodigy-prot==2.2.5"]
