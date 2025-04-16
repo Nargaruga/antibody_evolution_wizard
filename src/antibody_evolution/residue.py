@@ -28,6 +28,10 @@ RESIDUE_NAME_MAPPING = {
 
 def one_to_three(oneletter):
     """Convert a single letter amino acid code to a three letter code."""
+
+    if oneletter not in RESIDUE_NAME_MAPPING:
+        raise ValueError(f"Invalid single letter code: {oneletter}")
+
     return RESIDUE_NAME_MAPPING[oneletter]
 
 

@@ -5,7 +5,7 @@ import subprocess
 from dataclasses import dataclass
 
 from .mutation import Mutation
-from .residue import Residue
+from .residue import Residue, one_to_three
 
 from pymol import cmd
 
@@ -41,10 +41,16 @@ class Suggestion:
         )
 
 
-def is_residue_valid(molecule: str, chain: str, resi: int):
+def is_residue_valid(molecule: str, chain: str, residue: Residue) -> bool:
+    try:
+        one_to_three(residue.name)
+    except ValueError:
+        print(f"Invalid residue code: {residue.name}")
+        return False
+
     cmd.select(
         "temp",
-        f"byres ({molecule} and chain {chain} and resi {resi}) and name CA",
+        f"byres ({molecule} and chain {chain} and resi {residue.id}) and name CA",
     )
 
     if cmd.count_atoms("temp") <= 1:
@@ -79,6 +85,9 @@ def get_mutation_suggestions(
 ) -> list[Suggestion]:
     """Get mutation suggestions for the given sequence using the specified models."""
 
+    if sequence == "":
+        raise ValueError("Sequence cannot be empty.")
+
     if os.name == "nt":
         prefix = ["docker", "run", "--rm", "efficient-evolution"]
     else:
@@ -101,10 +110,8 @@ def get_mutation_suggestions(
     for line in res.stdout.strip().splitlines():
         if line:
             suggestion = Suggestion.from_EE_output(line, molecule_name, chain)
-            print(f"Suggestion: {suggestion.mutation.to_string()}")
             relative_id = suggestion.mutation.start_residue.id - 1
             suggestion.mutation.start_residue.id = ids[relative_id]
-            print(f"Relative ID: {relative_id}, Absolute ID: {ids[relative_id]}")
             suggestions.append(suggestion)
 
     return suggestions
