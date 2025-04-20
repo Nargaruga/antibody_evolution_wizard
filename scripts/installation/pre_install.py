@@ -3,23 +3,6 @@ import sys
 import subprocess
 
 
-def download_model(model_name: str):
-    subprocess.run(
-        [
-            "wget",
-            f"https://dl.fbaipublicfiles.com/fair-esm/models/{model_name}.pt",
-            "-P",
-            os.path.join(
-                os.path.expanduser("~"),
-                ".cache",
-                "torch",
-                "hub",
-                "checkpoints",
-            ),
-        ]
-    )
-
-
 def main():
     wizard_root = sys.argv[1]
 
@@ -61,28 +44,30 @@ def main():
             check=True,
         )
 
-        try:
-            print(
-                "You can choose to download the models now (may take a while) or have them downloaded automatically on first use. Download now? (Y/n)"
+        if os.name == "nt":
+            subprocess.run(
+                [
+                    "Compress-Archive",
+                    "-Path",
+                    "wizard_settings_plugin",
+                    "-DestinationPath",
+                    "plugin.zip",
+                    "-Force",
+                ],
+                cwd=wizard_root,
+                check=True,
             )
-            answer = input().strip().lower() or "y"
-        except KeyboardInterrupt:
-            print("Aborted by user.")
-            exit(0)
-
-        if answer == "y":
-            models = [
-                "esm1v_t33_650M_UR90S_1",
-                "esm1v_t33_650M_UR90S_2",
-                "esm1v_t33_650M_UR90S_3",
-                "esm1v_t33_650M_UR90S_4",
-                "esm1v_t33_650M_UR90S_5",
-                "esm_msa1_t12_100M_UR50S",
-                "esm1b_t33_650M_UR50S",
-            ]
-
-            for model in models:
-                download_model(model)
+        else:
+            subprocess.run(
+                [
+                    "zip",
+                    "-r",
+                    "plugin.zip",
+                    "wizard_settings_plugin",
+                ],
+                cwd=wizard_root,
+                check=True,
+            )
 
 
 if __name__ == "__main__":

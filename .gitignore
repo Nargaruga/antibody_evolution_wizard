@@ -4,6 +4,7 @@
 *.egg-info
 *build
 
+*.zip
 *.txt
 *.cif
 *.pdb
