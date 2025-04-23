@@ -1,12 +1,30 @@
 import os
 import sys
 import subprocess
+from pathlib import Path
 
 
 def main():
     wizard_root = sys.argv[1]
 
-    if os.name == "posix":
+    if os.name == "nt":
+        Path(os.path.join(wizard_root, "checkpoints")).mkdir(exist_ok=True)
+
+        print("Building Efficient-Evolution image...")
+        subprocess.run(
+            [
+                "docker",
+                "build",
+                "-f",
+                os.path.join("docker", "efficient_evolution.Dockerfile"),
+                "--tag",
+                "efficient-evolution:latest",
+                os.path.join("ext", "efficient-evolution"),
+            ],
+            cwd=wizard_root,
+            check=True,
+        )
+    else:
         try:
             subprocess.run(
                 "conda list --name efficient-evolution",
@@ -44,30 +62,31 @@ def main():
             check=True,
         )
 
-        if os.name == "nt":
-            subprocess.run(
-                [
-                    "Compress-Archive",
-                    "-Path",
-                    "wizard_settings_plugin",
-                    "-DestinationPath",
-                    "plugin.zip",
-                    "-Force",
-                ],
-                cwd=wizard_root,
-                check=True,
-            )
-        else:
-            subprocess.run(
-                [
-                    "zip",
-                    "-r",
-                    "plugin.zip",
-                    "wizard_settings_plugin",
-                ],
-                cwd=wizard_root,
-                check=True,
-            )
+    if os.name == "nt":
+        subprocess.run(
+            [
+                "powershell.exe",
+                "Compress-Archive",
+                "-Path",
+                "wizard_settings_plugin",
+                "-DestinationPath",
+                "plugin.zip",
+                "-Force",
+            ],
+            cwd=wizard_root,
+            check=True,
+        )
+    else:
+        subprocess.run(
+            [
+                "zip",
+                "-r",
+                "plugin.zip",
+                "wizard_settings_plugin",
+            ],
+            cwd=wizard_root,
+            check=True,
+        )
 
 
 if __name__ == "__main__":
