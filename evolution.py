@@ -58,6 +58,7 @@ class Evolution(Wizard):
         Wizard.__init__(self, _self)
         self.input_state = WizardInputState.INITIALIZING
         self.task_state = WizardTaskState.IDLE
+        self.extra_msg = ""
         cmd.refresh_wizard()
         self.models = ["esm1b"]
         self.molecule = None
@@ -101,6 +102,9 @@ class Evolution(Wizard):
             prompt.append("Generating suggestions, please wait...")
         elif self.task_state == WizardTaskState.FINDING_BEST_MUTATION:
             prompt.append("Finding the best mutation, please wait...")
+
+        if self.extra_msg:
+            prompt.append(self.extra_msg)
 
         return prompt
 
@@ -217,6 +221,8 @@ class Evolution(Wizard):
         if self.selected_suggestion:
             self.input_state = WizardInputState.MUTATION_SELECTED
 
+        self.extra_msg = ""
+
         cmd.refresh_wizard()
 
     def load_model(self):
@@ -326,7 +332,7 @@ class Evolution(Wizard):
     def find_mutation_for(self, sel: str):
         """Find the mutation suggestion for the selected residue, if any."""
 
-        residues = []
+        residues: list[Residue] = []
         context = {
             "molecule": self.molecule,
             "residues": residues,
@@ -340,6 +346,10 @@ class Evolution(Wizard):
 
         if len(residues) == 0:
             raise WizardError("No residues selected.")
+
+        assert len(residues) == 1, (
+            "Multiple residues selected."
+        )  # This should not happen
 
         residue = residues[0]
         for suggestion_str, suggestion in self.suggestions.items():
@@ -358,7 +368,9 @@ class Evolution(Wizard):
         try:
             mutation = self.find_mutation_for(name)
             if mutation is None:
+                self.extra_msg = "No mutation available for the selected residue."
                 print("No mutation available the selected residue.")
+                cmd.refresh_wizard()
             else:
                 self.set_suggestion(mutation)
         except WizardError as e:
@@ -447,12 +459,12 @@ class Evolution(Wizard):
             return
 
         def aux():
-            self.input_state = WizardTaskState.GENERATING_SUGGESTIONS
+            self.task_state = WizardTaskState.GENERATING_SUGGESTIONS
             cmd.refresh_wizard()
 
             try:
                 self.suggest_mutations()
-                self.input_state = WizardInputState.MUTATIONS_READY
+                self.update_input_state()
             except Exception as e:
                 print(f"Error generating suggestions: {e}")
                 return
@@ -539,7 +551,6 @@ class Evolution(Wizard):
         suggestion = self.suggestions[mutation_str]
         self.selected_suggestion = suggestion
         cmd.select("to_mutate", suggestion.mutation.start_residue.get_selection_str())
-
         self.update_input_state()
 
     def update_binding_affinity(self):
@@ -672,7 +683,9 @@ class Evolution(Wizard):
                 bg_pymol.cmd.get_wizard().apply()
                 bg_pymol.cmd.set_wizard()
 
-                mutated_molecule_file_handle, mutated_molecule_file_path = tempfile.mkstemp(suffix=".pdb")
+                mutated_molecule_file_handle, mutated_molecule_file_path = (
+                    tempfile.mkstemp(suffix=".pdb")
+                )
                 bg_pymol.cmd.save(mutated_molecule_file_path, self.molecule)
                 mutated_affinity = compute_affinity(
                     mutated_molecule_file_path,
@@ -689,9 +702,6 @@ class Evolution(Wizard):
 
                 bg_pymol.cmd.delete(self.molecule)
                 bg_pymol.cmd.delete("tmp")
-
-
-
 
         best_suggestion = min(ddgs, key=ddgs.get)
         print(f"Best mutation: {best_suggestion} with ddG of {ddgs[best_suggestion]}.")
