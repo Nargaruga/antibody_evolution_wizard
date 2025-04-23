@@ -428,8 +428,7 @@ class Evolution(Wizard):
             self.highlight_mutations()
             print("Undid last mutation")
 
-            self.input_state = WizardState.SUGGESTIONS_GENERATED
-            cmd.refresh_wizard()
+            self.update_input_state()
         else:
             print("Nothing to undo.")
 
@@ -491,7 +490,7 @@ class Evolution(Wizard):
             if is_residue_valid(
                 self.molecule,
                 self.chain_to_mutate,
-                suggestion.mutation.start_residue.id,
+                suggestion.mutation.start_residue,
             ):
                 filtered_mutations.append(suggestion)
             else:
