@@ -230,6 +230,13 @@ class Evolution(Wizard):
         models = yaml.safe_load(yaml_str)
         self.models = [model["name"] for model in models["models"] if model["use"]]
 
+        if self.models == []:
+            print(
+                "No models selected. Please use the configuration wizard to download and select the desired models."
+            )
+        else:
+            print(f"Loaded models: {self.models}")
+
         self.input_state = WizardInputState.READY
         cmd.refresh_wizard()
 
@@ -466,6 +473,12 @@ class Evolution(Wizard):
 
         if self.chain_to_mutate is None:
             print("Please select a chain.")
+            return
+
+        if not self.models:
+            self.extra_msg = "No models selected. Please use the configuration wizard to download and select the desired models."
+            print(self.extra_msg)
+            self.update_input_state()
             return
 
         annotated_residues = []

@@ -1,15 +1,15 @@
 models:
   - name: "esm1b"
-    use: True
+    use: False
   - name: "esm1v1"
-    use: True
+    use: False
   - name: "esm1v2"
-    use: True
+    use: False
   - name: "esm1v3"
-    use: True
+    use: False
   - name: "esm1v4"
-    use: True
+    use: False
   - name: "esm1v5"
-    use: True
+    use: False
   - name: "esm-msa"
     use: False
