@@ -20,22 +20,22 @@ def map_model_name(model_name: str) -> str:
 
 
 def download_model(model: str):
-    result = subprocess.run(
-        [
+    return subprocess.run(
+        (["powershell.exe"] if os.name == "nt" else [])
+        + [
             "wget",
             f"https://dl.fbaipublicfiles.com/fair-esm/models/{map_model_name(model)}.pt",
-            "-P",
+            ("-OutFile" if os.name == "nt" else "-P"),
             os.path.join(
                 os.path.expanduser("~"),
                 ".cache",
                 "torch",
                 "hub",
                 "checkpoints",
+                f"{map_model_name(model)}.pt",
             ),
         ]
     )
-
-    return result
 
 
 def download_models(models):

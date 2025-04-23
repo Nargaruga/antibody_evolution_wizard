@@ -89,7 +89,19 @@ def get_mutation_suggestions(
         raise ValueError("Sequence cannot be empty.")
 
     if os.name == "nt":
-        prefix = ["docker", "run", "--rm", "efficient-evolution"]
+        prefix = [
+            "docker",
+            "run",
+            "--rm",
+            "-v",
+            f"{os.path.join(os.path.expanduser('~'), '.cache', 'torch', 'hub', 'checkpoints')}:/root/.cache/torch/hub/checkpoints",
+            "efficient-evolution",
+            "conda",
+            "run",
+            "-n",
+            "efficient-evolution",
+            "recommend",
+        ]
     else:
         prefix = ["conda", "run", "-n", "efficient-evolution", "recommend"]
 
