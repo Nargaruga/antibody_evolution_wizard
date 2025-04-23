@@ -606,11 +606,13 @@ class Evolution(Wizard):
         self.highlight_mutations()
 
         # Record the new binding affinity
-        with tempfile.NamedTemporaryFile(suffix=".pdb", delete=True) as tmp_file:
-            cmd.save(tmp_file.name, self.molecule)
-            affinity = compute_affinity(
-                tmp_file.name, self.antibody_chains, self.antigen_chains
-            )
+        _, tmp_file_path = tempfile.mkstemp(
+            suffix=".pdb",
+        )
+        cmd.save(tmp_file_path, self.molecule)
+        affinity = compute_affinity(
+            tmp_file_path, self.antibody_chains, self.antigen_chains
+        )
         self.record_history(affinity)
         self.attach_affinity_label(affinity, cmd.count_states(self.molecule))
 
@@ -629,51 +631,54 @@ class Evolution(Wizard):
         self.task_state = WizardTaskState.FINDING_BEST_MUTATION
 
         ddgs = {}
-        with (
-            tempfile.NamedTemporaryFile(suffix=".pdb", delete=True) as molecule_file,
-        ):
-            # TODO use thread to avoid blocking gui
-            cmd.save(molecule_file.name, self.molecule)
-            original_affinity = compute_affinity(
-                molecule_file.name, self.antibody_chains, self.antigen_chains
-            )
+        molecule_file_handle, molecule_file_path = tempfile.mkstemp(suffix=".pdb")
+        # TODO use thread to avoid blocking gui
+        cmd.save(molecule_file_path, self.molecule)
+        original_affinity = compute_affinity(
+            molecule_file_path, self.antibody_chains, self.antigen_chains
+        )
 
-            ddgs = {}
-            with pymol2.PyMOL() as bg_pymol:
-                # TODO I'd put this in separate functions, but passing the PyMOL instance object causes problems
-                for mutation_str, suggestion in self.suggestions.items():
-                    bg_pymol.cmd.load(molecule_file.name, self.molecule)
+        ddgs = {}
+        with pymol2.PyMOL() as bg_pymol:
+            # TODO I'd put this in separate functions, but passing the PyMOL instance object causes problems
+            for mutation_str, suggestion in self.suggestions.items():
+                bg_pymol.cmd.load(molecule_file_path, self.molecule)
+                os.close(molecule_file_handle)
+                os.remove(molecule_file_path)
 
-                    selection_string = f"{self.molecule} and chain {self.chain_to_mutate} and resi {suggestion.mutation.start_residue.id}"
-                    bg_pymol.cmd.select("tmp", selection_string)
+                selection_string = f"{self.molecule} and chain {self.chain_to_mutate} and resi {suggestion.mutation.start_residue.id}"
+                bg_pymol.cmd.select("tmp", selection_string)
 
-                    bg_pymol.cmd.wizard("mutagenesis")
-                    bg_pymol.cmd.do("refresh_wizard")
-                    bg_pymol.cmd.get_wizard().do_select("tmp")
-                    bg_pymol.cmd.get_wizard().set_mode(
-                        one_to_three(suggestion.mutation.target_resn)
-                    )
-                    bg_pymol.cmd.frame(1)
-                    bg_pymol.cmd.get_wizard().apply()
-                    bg_pymol.cmd.set_wizard()
+                bg_pymol.cmd.wizard("mutagenesis")
+                bg_pymol.cmd.do("refresh_wizard")
+                bg_pymol.cmd.get_wizard().do_select("tmp")
+                bg_pymol.cmd.get_wizard().set_mode(
+                    one_to_three(suggestion.mutation.target_resn)
+                )
+                bg_pymol.cmd.frame(1)
+                bg_pymol.cmd.get_wizard().apply()
+                bg_pymol.cmd.set_wizard()
 
-                    with tempfile.NamedTemporaryFile(
-                        suffix=".pdb", delete=True
-                    ) as mutated_molecule_file:
-                        bg_pymol.cmd.save(mutated_molecule_file.name, self.molecule)
-                        mutated_affinity = compute_affinity(
-                            mutated_molecule_file.name,
-                            self.antibody_chains,
-                            self.antigen_chains,
-                        )
+                mutated_molecule_file_handle, mutated_molecule_file_path = tempfile.mkstemp(suffix=".pdb")
+                bg_pymol.cmd.save(mutated_molecule_file_path, self.molecule)
+                mutated_affinity = compute_affinity(
+                    mutated_molecule_file_path,
+                    self.antibody_chains,
+                    self.antigen_chains,
+                )
+                os.close(mutated_molecule_file_handle)
+                os.remove(mutated_molecule_file_path)
 
-                    ddg = round(mutated_affinity - original_affinity, 2)
+                ddg = round(mutated_affinity - original_affinity, 2)
 
-                    print(f"Computed ddG for {mutation_str}: {ddg}")
-                    ddgs[mutation_str] = ddg
+                print(f"Computed ddG for {mutation_str}: {ddg}")
+                ddgs[mutation_str] = ddg
 
-                    bg_pymol.cmd.delete(self.molecule)
-                    bg_pymol.cmd.delete("tmp")
+                bg_pymol.cmd.delete(self.molecule)
+                bg_pymol.cmd.delete("tmp")
+
+
+
 
         best_suggestion = min(ddgs, key=ddgs.get)
         print(f"Best mutation: {best_suggestion} with ddG of {ddgs[best_suggestion]}.")
