@@ -228,7 +228,7 @@ class Evolution(Wizard):
 
         yaml_str = raw_yaml.decode("utf-8")
         models = yaml.safe_load(yaml_str)
-        self.models = models["models"]
+        self.models = [model["name"] for model in models["models"] if model["use"]]
 
         self.input_state = WizardInputState.READY
         cmd.refresh_wizard()
