@@ -41,15 +41,15 @@ class Residue:
 
     molecule: str
     name: str
-    id: int
+    id: str
     chain: str
 
     def __eq__(self, other):
         return (
-            self.molecule == str(other.molecule)
-            and self.name == str(other.name)
-            and self.id == int(other.id)
-            and self.chain == str(other.chain)
+            self.molecule == other.molecule
+            and self.name == other.name
+            and self.id == other.id
+            and self.chain == other.chain
         )
 
     def get_selection_str(self):
