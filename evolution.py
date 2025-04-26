@@ -630,13 +630,16 @@ class Evolution(Wizard):
         self.highlight_mutations()
 
         # Record the new binding affinity
-        _, tmp_file_path = tempfile.mkstemp(
+        tmp_file_handle, tmp_file_path = tempfile.mkstemp(
             suffix=".pdb",
         )
         cmd.save(tmp_file_path, self.molecule)
         affinity = compute_affinity(
             tmp_file_path, self.antibody_chains, self.antigen_chains
         )
+        os.close(tmp_file_handle)
+        os.remove(tmp_file_path)
+
         self.record_history(affinity)
         self.attach_affinity_label(affinity, cmd.count_states(self.molecule))
 
@@ -667,8 +670,6 @@ class Evolution(Wizard):
             # TODO I'd put this in separate functions, but passing the PyMOL instance object causes problems
             for mutation_str, suggestion in self.suggestions.items():
                 bg_pymol.cmd.load(molecule_file_path, self.molecule)
-                os.close(molecule_file_handle)
-                os.remove(molecule_file_path)
 
                 selection_string = f"{self.molecule} and chain {self.chain_to_mutate} and resi {suggestion.mutation.start_residue.id}"
                 bg_pymol.cmd.select("tmp", selection_string)
@@ -702,6 +703,9 @@ class Evolution(Wizard):
 
                 bg_pymol.cmd.delete(self.molecule)
                 bg_pymol.cmd.delete("tmp")
+
+        os.close(molecule_file_handle)
+        os.remove(molecule_file_path)
 
         best_suggestion = min(ddgs, key=ddgs.get)
         print(f"Best mutation: {best_suggestion} with ddG of {ddgs[best_suggestion]}.")
