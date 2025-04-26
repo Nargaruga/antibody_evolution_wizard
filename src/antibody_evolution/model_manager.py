@@ -19,11 +19,52 @@ def map_model_name(model_name: str) -> str:
     return MODEL_NAME_MAPPING[model_name]
 
 
+def get_powershell_prefix() -> str:
+    if os.path.exists("C:\\Program Files\\PowerShell\\7\\pwsh.exe"):
+        return ["pwsh", "-Command"]
+    else:
+        return ["powershell"]
+
+
+def check_powershell_version(prefix: list[str], min_version: str) -> bool:
+    """Check if the PowerShell version is greater than or equal to the specified version."""
+    major = int(
+        subprocess.run(
+            prefix + ["$PSVersionTable.PSVersion.Major"],
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    )
+
+    minor = int(
+        subprocess.run(
+            prefix + ["$PSVersionTable.PSVersion.Minor"],
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    )
+
+    return float(f"{major}.{minor}") >= float(min_version)
+
+
 def download_model(model: str):
-    return subprocess.run(
-        (["powershell.exe"] if os.name == "nt" else [])
+    continue_flag = ""
+    if os.name == "nt":
+        powershell_min_version = "6.1"
+        if check_powershell_version(get_powershell_prefix(), powershell_min_version):
+            continue_flag = "-Resume"
+        else:
+            print(
+                f"Resuming downloads is only supported in PowerShell version {powershell_min_version} or higher."
+            )
+    elif os.name == "posix":
+        continue_flag = "-c"
+
+    output = subprocess.run(
+        (get_powershell_prefix() if os.name == "nt" else [])
+        + (["Invoke-WebRequest"] if os.name == "nt" else ["wget"])
+        + [continue_flag]
         + [
-            "wget",
             f"https://dl.fbaipublicfiles.com/fair-esm/models/{map_model_name(model)}.pt",
             ("-OutFile" if os.name == "nt" else "-P"),
             os.path.join(
@@ -34,8 +75,10 @@ def download_model(model: str):
                 "checkpoints",
                 f"{map_model_name(model)}.pt",
             ),
-        ]
+        ],
     )
+
+    return output
 
 
 def download_models(models):

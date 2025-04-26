@@ -62,10 +62,15 @@ def update_icon(item):
 
 def download_finished(success, form, list_pos):
     """Handle the download finished signal."""
+
     if success:
         print("Download completed successfully.")
     else:
         print("Download failed.")
+        if os.name == "nt":
+            print(
+                'WINDOWS NOTE: if you are seeing "Invoke-WebRequest: Object reference not set to an instance of an object.", it probably means you attempted to resume download of a fully-downloaded model. In that case, you can ignore this error.'
+            )
 
     update_icon(form.model_list.item(list_pos))
 
@@ -74,11 +79,12 @@ def start_download(form):
     """Start the download of selected models."""
 
     selected_models = get_selected_models(form)
-    for list_pos, model_name in selected_models:
-        if antibody_evolution.model_manager.is_downloaded(model_name):
-            print(f"Model {model_name} is already downloaded, skipping...")
-            continue
 
+    if not selected_models:
+        print("No models selected for download.")
+        return
+
+    for list_pos, model_name in selected_models:
         form.model_list.item(list_pos).setIcon(
             QtGui.QIcon(os.path.join(ICONS_PATH, "wait.png"))
         )
