@@ -7,6 +7,8 @@ from pathlib import Path
 def main():
     wizard_root = sys.argv[1]
 
+    plugin_name = "evolution_settings_plugin"
+
     if os.name == "nt":
         Path(os.path.join(wizard_root, "checkpoints")).mkdir(exist_ok=True)
 
@@ -68,7 +70,7 @@ def main():
                 "powershell.exe",
                 "Compress-Archive",
                 "-Path",
-                "wizard_settings_plugin",
+                plugin_name,
                 "-DestinationPath",
                 "plugin.zip",
                 "-Force",
@@ -82,7 +84,7 @@ def main():
                 "zip",
                 "-r",
                 "plugin.zip",
-                "wizard_settings_plugin",
+                plugin_name,
             ],
             cwd=wizard_root,
             check=True,
