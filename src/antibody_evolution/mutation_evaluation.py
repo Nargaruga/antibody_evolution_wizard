@@ -1,8 +1,21 @@
+import os
 import subprocess
+import tempfile
+
+from pymol import CmdException
+
+from antibody_evolution.mutation import Mutation
+from antibody_evolution.residue import one_to_three
 
 
 class AffinityComputationError(Exception):
     """Custom exception for affinity computation errors."""
+
+    pass
+
+
+class DDGComputationError(Exception):
+    """Custom exception for DDG computation errors."""
 
     pass
 
@@ -46,3 +59,58 @@ def compute_affinity(
         raise AffinityComputationError(
             f"command {' '.join(command)} failed: {e.stderr}"
         )
+
+
+def compute_ddg(
+    molecule_file_path,
+    chain,
+    original_affinity,
+    mutation: Mutation,
+    antibody_chains,
+    partner_chains,
+    pymol_instance,
+) -> float:
+    """Compute the mutation's DDG and return it."""
+    molecule="prova"
+    pymol_instance.cmd.load(molecule_file_path, molecule)
+
+    selection_string = (
+        f"{molecule} and chain {chain} and resi {mutation.start_residue.id}"
+    )
+    pymol_instance.cmd.select("tmp", selection_string)
+
+    pymol_instance.cmd.wizard("mutagenesis")
+    pymol_instance.cmd.do("refresh_wizard")
+    try:
+        pymol_instance.cmd.get_wizard().do_select("tmp")
+    except CmdException as e:
+        # Not sure why this happens. A molecule that causes this is 3L5X
+        msg = f"Skipping mutation {mutation} due to error selecting residue: {e}"
+        raise DDGComputationError(msg)
+
+    pymol_instance.cmd.get_wizard().set_mode(one_to_three(mutation.target_resn))
+    pymol_instance.cmd.frame(1)
+    pymol_instance.cmd.get_wizard().apply()
+    pymol_instance.cmd.set_wizard()
+
+    mutated_molecule_file_handle, mutated_molecule_file_path = tempfile.mkstemp(
+        suffix=".pdb"
+    )
+    pymol_instance.cmd.save(mutated_molecule_file_path, molecule)
+    try:
+        mutated_affinity = compute_affinity(
+            mutated_molecule_file_path,
+            antibody_chains,
+            partner_chains,
+        )
+    except AffinityComputationError as e:
+        msg = f"Skipping mutation {mutation} due to error computing new affinity: {e}"
+        raise DDGComputationError(msg)
+    finally:
+        os.close(mutated_molecule_file_handle)
+        os.remove(mutated_molecule_file_path)
+
+    pymol_instance.cmd.delete("tmp")
+    pymol_instance.cmd.delete("tmp_molecule")
+
+    return round(mutated_affinity - original_affinity, 2)

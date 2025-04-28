@@ -7,18 +7,20 @@ import re
 from dataclasses import dataclass
 import tempfile
 
-from pymol import cmd, CmdException
+from pymol import cmd
 
 from antibody_evolution.mutation_evaluation import (
     compute_affinity,
+    compute_ddg,
     AffinityComputationError,
+    DDGComputationError,
 )
 from antibody_evolution.mutation_suggestions import (
     is_residue_valid,
     get_mutation_suggestions,
 )
 from antibody_evolution.mutation import Mutation
-from antibody_evolution.residue import Residue, one_to_three
+from antibody_evolution.residue import Residue
 
 
 @dataclass
@@ -104,49 +106,24 @@ def parse_experiments(file_path):
     return experiments
 
 
-def compute_ddg(molecule, chain, original_affinity, experiment: Experiment) -> float:
-    """Compute the mutation's DDG and return it."""
+def evaluate_experiment(molecule, chain, original_affinity, experiment: Experiment) -> Experiment:
 
-    selection_string = (
-        f"{molecule} and chain {chain} and resi {experiment.mutation.start_residue.id}"
-    )
-    cmd.select("tmp", selection_string)
-
-    cmd.wizard("mutagenesis")
-    cmd.do("refresh_wizard")
     try:
-        cmd.get_wizard().do_select("tmp")
-    except CmdException as e:
-        # Not sure why this happens. A molecule that causes this is 3L5X
-        msg = f"Skipping mutation {experiment.mutation} due to error selecting residue: {e}"
-        print(msg)
-        experiment.note = msg
-        return experiment
-    cmd.get_wizard().set_mode(one_to_three(experiment.mutation.target_resn))
-    cmd.frame(1)
-    cmd.get_wizard().apply()
-    cmd.set_wizard()
-
-    mutated_molecule_file_handle, mutated_molecule_file_path = tempfile.mkstemp(
-        suffix=".pdb"
-    )
-    cmd.save(mutated_molecule_file_path, molecule)
-    try:
-        mutated_affinity = compute_affinity(
-            mutated_molecule_file_path,
+        ddg = compute_ddg(
+            molecule,
+            chain,
+            original_affinity,
+            experiment.mutation,
             [chain],
             experiment.partner_chains,
         )
-    except AffinityComputationError as e:
-        msg = f"Skipping mutation {experiment.mutation} due to error computing new affinity: {e}"
-        print(msg)
-        experiment.note = msg
-        return experiment
-    finally:
-        os.close(mutated_molecule_file_handle)
-        os.remove(mutated_molecule_file_path)
 
-    return round(mutated_affinity - original_affinity, 2)
+        experiment.ddg = ddg
+    except DDGComputationError as e:
+        print(f"DDG computation for {experiment.mutation.to_string()} failed.")
+        experiment.note = str(e)
+    finally:
+        return experiment
 
 
 def annotate_experiments(
@@ -178,7 +155,7 @@ def annotate_experiments(
                 continue
 
             for experiment in experiments:
-                experiment.ddg = compute_ddg(
+                experiment = evaluate_experiment(
                     molecule,
                     chain,
                     original_affinity,

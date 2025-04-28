@@ -3,10 +3,10 @@ from __future__ import annotations
 import os
 from enum import IntEnum, auto
 import threading
-from pathlib import Path
 from dataclasses import dataclass
 import tempfile
 import pkgutil
+import csv
 
 
 from pymol.wizard import Wizard
@@ -18,6 +18,7 @@ import yaml
 
 from antibody_evolution.mutation_evaluation import (
     compute_affinity,
+    compute_ddg,
     AffinityComputationError,
 )
 from antibody_evolution.mutation_suggestions import (
@@ -476,6 +477,51 @@ class Evolution(Wizard):
         worker_thread = threading.Thread(target=aux)
         worker_thread.start()
 
+    def serialize_suggestions(self):
+        """Serialize the suggestions to a CSV file."""
+
+        if self.molecule is None:
+            print("Please select a molecule.")
+            return
+
+        if self.suggestions is None:
+            print("No suggestions available.")
+            return
+
+        molecule_file_handle, molecule_file_path = tempfile.mkstemp(suffix=".pdb")
+        # TODO use thread to avoid blocking gui
+        cmd.save(molecule_file_path, self.molecule)
+        original_affinity = compute_affinity(
+            molecule_file_path, self.antibody_chains, self.antigen_chains
+        )
+
+        with pymol2.PyMOL() as bg_pymol:
+            with open(
+                os.path.join(os.path.expanduser("~"), "suggestions.csv"),
+                "w",
+                newline="",
+            ) as csv_file:
+                writer = csv.writer(csv_file)
+                writer.writerow(["Mutation", "Occurrences", "DDG"])
+                for suggestion in self.suggestions.values():
+                    ddg = compute_ddg(
+                        molecule_file_path,
+                        self.chain_to_mutate,
+                        original_affinity,
+                        suggestion.mutation,
+                        self.antibody_chains,
+                        self.antigen_chains,
+                        bg_pymol,
+                    )
+                    writer.writerow(
+                        [suggestion.mutation.to_string(), suggestion.occurrences, ddg]
+                    )
+
+                print(f"Suggestions saved to {csv_file}.")
+
+        os.close(molecule_file_handle)
+        os.remove(molecule_file_path)
+
     def suggest_mutations(self):
         """Generate mutation suggestions."""
 
@@ -527,6 +573,8 @@ class Evolution(Wizard):
         if self.history == []:
             self.record_history(0.0)
 
+        # self.serialize_suggestions()  # TODO temporary
+
         print("Select a mutation.")
 
     def populate_mutation_choices(self, suggestions: list[Suggestion]):
@@ -550,12 +598,11 @@ class Evolution(Wizard):
         """Set the selected mutation to apply."""
         suggestion = self.suggestions[mutation_str]
         self.selected_suggestion = suggestion
+        cmd.delete("to_mutate")
         cmd.select("to_mutate", suggestion.mutation.start_residue.get_selection_str())
         self.update_input_state()
 
-    def update_binding_affinity(self):
-        """Update the binding affinity for the current state of the molecule."""
-
+    def compute_binding_affinity(self):
         if self.molecule is None:
             print("Please select a molecule.")
             return
@@ -565,7 +612,6 @@ class Evolution(Wizard):
             return
 
         prodigy_outfile_handle, prodigy_outfile_path = tempfile.mkstemp(suffix=".pdb")
-
         cmd.save(prodigy_outfile_path, self.molecule)
         try:
             affinity = compute_affinity(
@@ -577,6 +623,16 @@ class Evolution(Wizard):
         finally:
             os.close(prodigy_outfile_handle)
             os.remove(prodigy_outfile_path)
+
+        return affinity
+
+    def update_binding_affinity(self):
+        """Update the binding affinity for the current state of the molecule."""
+
+        affinity = self.compute_binding_affinity()
+        if affinity is None:
+            print("Affinity update aborted.")
+            return
 
         print(f"New affinity for state {cmd.get_state()}: {affinity} kcal/mol.")
         self.attach_affinity_label(affinity, cmd.get_state())
@@ -657,7 +713,6 @@ class Evolution(Wizard):
 
         self.task_state = WizardTaskState.FINDING_BEST_MUTATION
 
-        ddgs = {}
         molecule_file_handle, molecule_file_path = tempfile.mkstemp(suffix=".pdb")
         # TODO use thread to avoid blocking gui
         cmd.save(molecule_file_path, self.molecule)
@@ -665,50 +720,30 @@ class Evolution(Wizard):
             molecule_file_path, self.antibody_chains, self.antigen_chains
         )
 
-        ddgs = {}
+        best_ddg = float("inf")
+        best_suggestion = None
         with pymol2.PyMOL() as bg_pymol:
-            # TODO I'd put this in separate functions, but passing the PyMOL instance object causes problems
             for mutation_str, suggestion in self.suggestions.items():
-                bg_pymol.cmd.load(molecule_file_path, self.molecule)
-
-                selection_string = f"{self.molecule} and chain {self.chain_to_mutate} and resi {suggestion.mutation.start_residue.id}"
-                bg_pymol.cmd.select("tmp", selection_string)
-
-                bg_pymol.cmd.wizard("mutagenesis")
-                bg_pymol.cmd.do("refresh_wizard")
-                bg_pymol.cmd.get_wizard().do_select("tmp")
-                bg_pymol.cmd.get_wizard().set_mode(
-                    one_to_three(suggestion.mutation.target_resn)
-                )
-                bg_pymol.cmd.frame(1)
-                bg_pymol.cmd.get_wizard().apply()
-                bg_pymol.cmd.set_wizard()
-
-                mutated_molecule_file_handle, mutated_molecule_file_path = (
-                    tempfile.mkstemp(suffix=".pdb")
-                )
-                bg_pymol.cmd.save(mutated_molecule_file_path, self.molecule)
-                mutated_affinity = compute_affinity(
-                    mutated_molecule_file_path,
+                ddg = compute_ddg(
+                    molecule_file_path,
+                    self.chain_to_mutate,
+                    original_affinity,
+                    suggestion.mutation,
                     self.antibody_chains,
                     self.antigen_chains,
+                    bg_pymol,
                 )
-                os.close(mutated_molecule_file_handle)
-                os.remove(mutated_molecule_file_path)
-
-                ddg = round(mutated_affinity - original_affinity, 2)
 
                 print(f"Computed ddG for {mutation_str}: {ddg}")
-                ddgs[mutation_str] = ddg
-
-                bg_pymol.cmd.delete(self.molecule)
-                bg_pymol.cmd.delete("tmp")
+                if ddg < best_ddg:
+                    print(f"New max ddG: {ddg} for {mutation_str}")
+                    best_ddg = ddg
+                    best_suggestion = suggestion.mutation.to_string()
 
         os.close(molecule_file_handle)
         os.remove(molecule_file_path)
 
-        best_suggestion = min(ddgs, key=ddgs.get)
-        print(f"Best mutation: {best_suggestion} with ddG of {ddgs[best_suggestion]}.")
+        print(f"Best mutation: {best_suggestion} with ddG of {best_ddg}.")
         self.set_suggestion(best_suggestion)
 
         self.task_state = WizardTaskState.IDLE
