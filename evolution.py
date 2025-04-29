@@ -45,10 +45,10 @@ class WizardInputState(IntEnum):
     MUTATION_SELECTED = auto()
 
 
-class WizardTaskState(IntEnum):
-    IDLE = auto()
+class WizardTask(IntEnum):
     GENERATING_SUGGESTIONS = auto()
     FINDING_BEST_MUTATION = auto()
+    COMPUTING_AFFINITY = auto()
 
 
 class Evolution(Wizard):
@@ -57,22 +57,23 @@ class Evolution(Wizard):
     def __init__(self, _self=cmd):
         Wizard.__init__(self, _self)
         self.input_state = WizardInputState.INITIALIZING
-        self.task_state = WizardTaskState.IDLE
-        self.extra_msg = ""
         cmd.refresh_wizard()
+
+        self.state_lock = threading.Lock()
+        self.tasks = []
+        self.tasks_lock = threading.Lock()
+        self.extra_msg = ""
         self.models = ["esm1b"]
         self.molecule = None
         self.chain_to_mutate = None
         self.antibody_chains = []
         self.antigen_chains = []
         self.suggestions: dict[str, Suggestion] = {}
+        self.suggestions_lock = threading.Lock()
         self.selected_suggestion = None
         self.history: list[HistoryEntry] = []
         self.populate_molecule_choices()
-
-        # Load the model in a separate thread
-        initializer_thread = threading.Thread(target=self.load_model)
-        initializer_thread.start()
+        self.load_models()
 
     def get_prompt(self):  # type: ignore
         """Return the prompt for the current state of the wizard."""
@@ -98,10 +99,13 @@ class Evolution(Wizard):
                 "Apply the mutation %s?" % self.selected_suggestion.mutation.to_string()
             )
 
-        if self.task_state == WizardTaskState.GENERATING_SUGGESTIONS:
-            prompt.append("Generating suggestions, please wait...")
-        elif self.task_state == WizardTaskState.FINDING_BEST_MUTATION:
-            prompt.append("Finding the best mutation, please wait...")
+        for task in self.tasks:
+            if task == WizardTask.GENERATING_SUGGESTIONS:
+                prompt.append("Generating suggestions, please wait...")
+            elif task == WizardTask.FINDING_BEST_MUTATION:
+                prompt.append("Finding the best mutation, please wait...")
+            elif task == WizardTask.COMPUTING_AFFINITY:
+                prompt.append("Computing binding affinity, please wait...")
 
         if self.extra_msg:
             prompt.append(self.extra_msg)
@@ -204,28 +208,55 @@ class Evolution(Wizard):
 
         return options
 
+    def add_task(self, task: WizardTask):
+        """Add a task to the list of tasks."""
+
+        if self.check_task(task):
+            return
+
+        with self.tasks_lock:
+            self.tasks.append(task)
+            cmd.refresh_wizard()
+
+    def remove_task(self, task: WizardTask):
+        """Remove a task from the list of tasks."""
+
+        if not self.check_task(task):
+            return
+
+        with self.tasks_lock:
+            self.tasks.remove(task)
+            cmd.refresh_wizard()
+
+    def check_task(self, task: WizardTask) -> bool:
+        """Check if a task is in the list of tasks."""
+
+        with self.tasks_lock:
+            return task in self.tasks
+
     def update_input_state(self):
         """Update the state of the wizard based on the current inputs."""
 
-        if self.molecule:
-            self.input_state = WizardInputState.MOLECULE_SELECTED
-        else:
-            self.input_state = WizardInputState.READY
+        with self.state_lock:
+            if self.molecule:
+                self.input_state = WizardInputState.MOLECULE_SELECTED
+            else:
+                self.input_state = WizardInputState.READY
 
-        if self.chain_to_mutate:
-            self.input_state = WizardInputState.CHAIN_TO_MUTATE_SELECTED
+            if self.chain_to_mutate:
+                self.input_state = WizardInputState.CHAIN_TO_MUTATE_SELECTED
 
-        if self.suggestions:
-            self.input_state = WizardInputState.MUTATIONS_READY
+            if self.suggestions:
+                self.input_state = WizardInputState.MUTATIONS_READY
 
-        if self.selected_suggestion:
-            self.input_state = WizardInputState.MUTATION_SELECTED
+            if self.selected_suggestion:
+                self.input_state = WizardInputState.MUTATION_SELECTED
 
-        self.extra_msg = ""
+            self.extra_msg = ""
 
-        cmd.refresh_wizard()
+            cmd.refresh_wizard()
 
-    def load_model(self):
+    def load_models(self):
         raw_yaml = pkgutil.get_data(
             "antibody_evolution", os.path.join("config", "models.yaml")
         )
@@ -243,8 +274,7 @@ class Evolution(Wizard):
         else:
             print(f"Loaded models: {self.models}")
 
-        self.input_state = WizardInputState.READY
-        cmd.refresh_wizard()
+        self.update_input_state()
 
     def populate_molecule_choices(self):
         """Populate the menu with the available molecules in the session."""
@@ -454,23 +484,21 @@ class Evolution(Wizard):
     def run(self):
         """Run the wizard to generate suggestions for the selected molecule."""
 
-        if self.molecule is None:
-            print("Please select a molecule.")
+        if self.check_task(WizardTask.GENERATING_SUGGESTIONS):
+            print("Already generating suggestions, please wait...")
             return
 
         def aux():
-            self.task_state = WizardTaskState.GENERATING_SUGGESTIONS
-            cmd.refresh_wizard()
+            self.add_task(WizardTask.GENERATING_SUGGESTIONS)
 
             try:
                 self.suggest_mutations()
-                self.update_input_state()
             except Exception as e:
                 print(f"Error generating suggestions: {e}")
                 return
             finally:
-                self.task_state = WizardTaskState.IDLE
-                cmd.refresh_wizard()
+                self.remove_task(WizardTask.GENERATING_SUGGESTIONS)
+                self.update_input_state()
 
         # Generate suggestions on a separate thread
         worker_thread = threading.Thread(target=aux)
@@ -577,17 +605,19 @@ class Evolution(Wizard):
 
         self.menu["mutations"] = [[2, "Mutations", ""]]
         suggestions.sort(key=lambda x: -x.occurrences)
-        for suggestion in suggestions:
-            self.suggestions[suggestion.mutation.to_string()] = suggestion
-            self.menu["mutations"].append(
-                [
-                    1,
-                    f"{suggestion.mutation.to_string()} ({suggestion.occurrences})",
-                    'cmd.get_wizard().set_suggestion("'
-                    + suggestion.mutation.to_string()
-                    + '")',
-                ]
-            )
+        with self.suggestions_lock:
+            self.suggestions = {}
+            for suggestion in suggestions:
+                self.suggestions[suggestion.mutation.to_string()] = suggestion
+                self.menu["mutations"].append(
+                    [
+                        1,
+                        f"{suggestion.mutation.to_string()} ({suggestion.occurrences})",
+                        'cmd.get_wizard().set_suggestion("'
+                        + suggestion.mutation.to_string()
+                        + '")',
+                    ]
+                )
 
     def set_suggestion(self, mutation_str):
         """Set the selected mutation to apply."""
@@ -624,13 +654,25 @@ class Evolution(Wizard):
     def update_binding_affinity(self):
         """Update the binding affinity for the current state of the molecule."""
 
-        affinity = self.compute_binding_affinity()
-        if affinity is None:
-            print("Affinity update aborted.")
+        if self.check_task(WizardTask.COMPUTING_AFFINITY):
+            print("Already computing binding affinity, please wait...")
             return
 
-        print(f"New affinity for state {cmd.get_state()}: {affinity} kcal/mol.")
-        self.attach_affinity_label(affinity, cmd.get_state())
+        def aux():
+            self.add_task(WizardTask.COMPUTING_AFFINITY)
+            affinity = self.compute_binding_affinity()
+            if affinity is None:
+                print("Affinity update aborted.")
+                return
+
+            print(f"New affinity for state {cmd.get_state()}: {affinity} kcal/mol.")
+            self.attach_affinity_label(affinity, cmd.get_state())
+            self.remove_task(WizardTask.COMPUTING_AFFINITY)
+            self.update_input_state()
+
+        # Compute affinity on a separate thread
+        worker_thread = threading.Thread(target=aux)
+        worker_thread.start()
 
     def apply_selected_mutation(self):
         """Apply the selected mutation to the molecule."""
@@ -698,6 +740,11 @@ class Evolution(Wizard):
 
     def select_best_mutation(self):
         """Select the mutation with the highest impact on the binding affinity."""
+
+        if self.check_task(WizardTask.FINDING_BEST_MUTATION):
+            print("Already looking for the best mutation, please wait...")
+            return
+
         if self.molecule is None:
             print("Please select a molecule.")
             return
@@ -706,40 +753,44 @@ class Evolution(Wizard):
             print("Please select an antibody and antigen chain.")
             return
 
-        self.task_state = WizardTaskState.FINDING_BEST_MUTATION
+        def aux():
+            self.add_task(WizardTask.FINDING_BEST_MUTATION)
 
-        molecule_file_handle, molecule_file_path = tempfile.mkstemp(suffix=".pdb")
-        # TODO use thread to avoid blocking gui
-        cmd.save(molecule_file_path, self.molecule)
-        original_affinity = compute_affinity(
-            molecule_file_path, self.antibody_chains, self.antigen_chains
-        )
+            molecule_file_handle, molecule_file_path = tempfile.mkstemp(suffix=".pdb")
+            cmd.save(molecule_file_path, self.molecule)
+            original_affinity = compute_affinity(
+                molecule_file_path, self.antibody_chains, self.antigen_chains
+            )
 
-        best_ddg = float("inf")
-        best_suggestion = None
-        with pymol2.PyMOL() as bg_pymol:
-            for mutation_str, suggestion in self.suggestions.items():
-                ddg = compute_ddg(
-                    molecule_file_path,
-                    self.chain_to_mutate,
-                    original_affinity,
-                    suggestion.mutation,
-                    self.antibody_chains,
-                    self.antigen_chains,
-                    bg_pymol,
-                )
+            best_ddg = float("inf")
+            best_suggestion = None
+            with pymol2.PyMOL() as bg_pymol, self.suggestions_lock:
+                for mutation_str, suggestion in self.suggestions.items():
+                    ddg = compute_ddg(
+                        molecule_file_path,
+                        self.chain_to_mutate,
+                        original_affinity,
+                        suggestion.mutation,
+                        self.antibody_chains,
+                        self.antigen_chains,
+                        bg_pymol,
+                    )
 
-                print(f"Computed ddG for {mutation_str}: {ddg}")
-                if ddg < best_ddg:
-                    print(f"New max ddG: {ddg} for {mutation_str}")
-                    best_ddg = ddg
-                    best_suggestion = suggestion.mutation.to_string()
+                    print(f"Computed ddG for {mutation_str}: {ddg}")
+                    if ddg < best_ddg:
+                        print(f"New max ddG: {ddg} for {mutation_str}")
+                        best_ddg = ddg
+                        best_suggestion = suggestion.mutation.to_string()
 
-        os.close(molecule_file_handle)
-        os.remove(molecule_file_path)
+                print(f"Best mutation: {best_suggestion} with ddG of {best_ddg}.")
+                self.set_suggestion(best_suggestion)
 
-        print(f"Best mutation: {best_suggestion} with ddG of {best_ddg}.")
-        self.set_suggestion(best_suggestion)
+            os.close(molecule_file_handle)
+            os.remove(molecule_file_path)
 
-        self.task_state = WizardTaskState.IDLE
-        self.update_input_state()
+            self.remove_task(WizardTask.FINDING_BEST_MUTATION)
+            self.update_input_state()
+
+        # Find the best mutation on a separate thread
+        worker_thread = threading.Thread(target=aux)
+        worker_thread.start()
