@@ -518,13 +518,25 @@ class Evolution(Wizard):
         molecule_file_handle, molecule_file_path = tempfile.mkstemp(suffix=".pdb")
         # TODO use thread to avoid blocking gui
         cmd.save(molecule_file_path, self.molecule)
-        original_affinity = compute_affinity(
-            molecule_file_path, self.antibody_chains, self.antigen_chains
-        )
+        try:
+            original_affinity = compute_affinity(
+                molecule_file_path, self.antibody_chains, self.antigen_chains
+            )
+        except AffinityComputationError as e:
+            print(f"Error computing affinity: {e}")
+            os.close(molecule_file_handle)
+            os.remove(molecule_file_path)
+            return
 
         with pymol2.PyMOL() as bg_pymol:
+            suggestions_file_path = os.path.join(
+                os.path.expanduser("~"), f"suggestions_{self.chain_to_mutate}.csv"
+            )
+            os.remove(suggestions_file_path) if os.path.exists(
+                suggestions_file_path
+            ) else None
             with open(
-                os.path.join(os.path.expanduser("~"), "suggestions.csv"),
+                suggestions_file_path,
                 "w",
                 newline="",
             ) as csv_file:
