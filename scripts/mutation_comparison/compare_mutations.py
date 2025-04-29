@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import tempfile
 
 from pymol import cmd
+import pymol2
 
 from antibody_evolution.mutation_evaluation import (
     compute_affinity,
@@ -16,7 +17,6 @@ from antibody_evolution.mutation_evaluation import (
     DDGComputationError,
 )
 from antibody_evolution.mutation_suggestions import (
-    is_residue_valid,
     get_mutation_suggestions,
 )
 from antibody_evolution.mutation import Mutation
@@ -106,17 +106,23 @@ def parse_experiments(file_path):
     return experiments
 
 
-def evaluate_experiment(molecule, chain, original_affinity, experiment: Experiment) -> Experiment:
-
+def annotate_experiment(
+    molecule_file_path, chain, original_affinity, experiment: Experiment, pymol_instance
+) -> Experiment:
     try:
-        ddg = compute_ddg(
-            molecule,
-            chain,
-            original_affinity,
-            experiment.mutation,
-            [chain],
-            experiment.partner_chains,
-        )
+        print("Computing DDG...")
+        with pymol2.PyMOL() as pymol_instance:
+            ddg = compute_ddg(
+                molecule_file_path,
+                chain,
+                original_affinity,
+                experiment.mutation,
+                [chain],
+                experiment.partner_chains,
+                pymol_instance,
+            )
+
+        print(f"DDG for {experiment.mutation.to_string()} is {ddg}")
 
         experiment.ddg = ddg
     except DDGComputationError as e:
@@ -131,39 +137,44 @@ def annotate_experiments(
 ) -> dict[str, dict[str, list[Experiment]]]:
     """Annotate experiments with DDG values."""
 
-    for molecule, experiments_by_chain in experiments_by_molecule.items():
-        cmd.delete("all")
-        cmd.fetch(molecule)
+    with pymol2.PyMOL() as pymol_instance:
+        for molecule, experiments_by_chain in experiments_by_molecule.items():
+            pymol_instance.cmd.delete("all")
+            pymol_instance.cmd.fetch(molecule)
 
-        molecule_file_handle, molecule_file_path = tempfile.mkstemp(suffix=".pdb")
-        cmd.save(molecule_file_path, molecule)
+            molecule_file_handle, molecule_file_path = tempfile.mkstemp(suffix=".pdb")
+            pymol_instance.cmd.save(molecule_file_path, molecule)
 
-        for chain, experiments in experiments_by_chain.items():
-            if len(experiments) == 0:
-                continue
+            for chain, experiments in experiments_by_chain.items():
+                if len(experiments) == 0:
+                    continue
 
-            # We assume partner chains are the same for all experiments in the same chain
-            try:
-                original_affinity = compute_affinity(
-                    molecule_file_path, [chain], experiments[0].partner_chains
-                )
-            except AffinityComputationError as e:
-                msg = f"Skipping chain {chain} due to error computing original affinity: {e}"
-                print(msg)
+                # We assume partner chains are the same for all experiments in the same chain
+                try:
+                    original_affinity = compute_affinity(
+                        molecule_file_path, [chain], experiments[0].partner_chains
+                    )
+                except AffinityComputationError as e:
+                    msg = f"Skipping chain {chain} due to error computing original affinity: {e}"
+                    print(msg)
+                    for experiment in experiments:
+                        experiment.note = msg
+                    continue
+
                 for experiment in experiments:
-                    experiment.note = msg
-                continue
+                    print(
+                        f"Annotating {experiment.mutation.to_string()} in {molecule} chain {chain}..."
+                    )
+                    experiment = annotate_experiment(
+                        molecule_file_path,
+                        chain,
+                        original_affinity,
+                        experiment,
+                        pymol_instance,
+                    )
 
-            for experiment in experiments:
-                experiment = evaluate_experiment(
-                    molecule,
-                    chain,
-                    original_affinity,
-                    experiment,
-                )
-
-        os.close(molecule_file_handle)
-        os.remove(molecule_file_path)
+            os.close(molecule_file_handle)
+            os.remove(molecule_file_path)
 
     return experiments_by_molecule
 
@@ -217,11 +228,7 @@ def suggest_experiments(verified_exps_by_mol: dict[str, dict[str, list[Experimen
                 )
 
                 for suggestion in suggestions:
-                    if is_residue_valid(
-                        molecule,
-                        chain,
-                        suggestion.mutation.start_residue,
-                    ):
+                    if suggestion.mutation.start_residue.is_valid():
                         suggested_experiments[molecule][chain].append(
                             Experiment(
                                 suggestion.mutation,
@@ -236,48 +243,42 @@ def suggest_experiments(verified_exps_by_mol: dict[str, dict[str, list[Experimen
     return suggested_experiments
 
 
+def print_summary(experiments: dict[str, list[Experiment]]):
+    for chain, experiments in experiments.items():
+        print(f"Processing chain {chain}:")
+        n_improving_mutations = 0
+        best_mutation = None
+        lowest_ddg = float("inf")
+        for experiment in experiments:
+            if experiment.ddg < 0:
+                n_improving_mutations += 1
+            if experiment.ddg is not None and experiment.ddg < lowest_ddg:
+                lowest_ddg = experiment.ddg
+                best_mutation = experiment.mutation
+        print(f"{len(experiments)} mutations.")
+        print(f"Of those, {n_improving_mutations} have a DDG < 0.")
+        print(f"Best mutation: {best_mutation.to_string()} with DDG {lowest_ddg}")
+
+
 def compare_mutations(
     verified_exps_by_molecule: dict[str, dict[str, list[Experiment]]],
     suggested_exps_by_molecule: dict[str, dict[str, list[Experiment]]],
 ):
-    for molecule, verified_exps_by_chain in verified_exps_by_molecule.items():
+    for molecule, _ in verified_exps_by_molecule.items():
         if molecule not in suggested_exps_by_molecule:
-            print(f"Skipping {molecule} as it has no suggested experiments")
+            print(f"Skipping {molecule} as it has no suggested experiments.")
             continue
 
-        for chain, verified_experiments in verified_exps_by_chain.items():
-            if chain not in suggested_exps_by_molecule[molecule]:
-                print(f"Skipping {chain} as it has no suggested experiments")
-                continue
+        print(f"---Comparing verified and suggested experiments for {molecule}---")
 
-            print(
-                f"---Comparing verified and suggested experiments for {molecule} chain {chain}---"
-            )
-            suggested_experiments = suggested_exps_by_molecule[molecule][chain]
+        print("Verified experiments:")
+        print_summary(verified_exps_by_molecule[molecule])
+        print()
+        print("Suggested experiments:")
+        print_summary(suggested_exps_by_molecule[molecule])
 
-            best_verified_mutation = None
-            best_verified_ddg = float("inf")
-            for experiment in verified_experiments:
-                if experiment.ddg is not None and experiment.ddg < best_verified_ddg:
-                    best_verified_ddg = experiment.ddg
-                    best_verified_mutation = experiment.mutation
-            print(f"{len(verified_experiments)} verified mutations.")
-            print(
-                f"Best verified mutation: {best_verified_mutation.to_string()} with DDG {best_verified_ddg}"
-            )
-
-            best_suggested_mutation = None
-            best_suggested_ddg = float("inf")
-            for experiment in suggested_experiments:
-                if experiment.ddg is not None and experiment.ddg < best_suggested_ddg:
-                    best_suggested_ddg = experiment.ddg
-                    best_suggested_mutation = experiment.mutation
-            print(f"{len(suggested_experiments)} suggested mutations.")
-            print(
-                f"Best suggested mutation: {best_suggested_mutation.to_string()} with DDG {best_suggested_ddg}"
-            )
-
-            print("-------")
+        print("---End of comparison---")
+        print()
 
 
 def main():
@@ -319,31 +320,31 @@ def main():
         print("Comparing verified and suggested experiments...")
         compare_mutations(verified_exps_by_molecule, suggested_exps_by_molecule)
 
-    # print("Verified experiments:")
-    # for molecule, verified_exps_by_chain in verified_exps_by_molecule.items():
-    #     print(f"  {molecule}:")
-    #     for chain, experiments in verified_exps_by_chain.items():
-    #         print(f"    {chain}:")
-    #         for experiment in experiments:
-    #             try:
-    #                 print(
-    #                     f"      {experiment.mutation.to_string()} with DDG {experiment.ddg}"
-    #                 )
-    #             except ValueError as e:
-    #                 print(f"Error printing experiment {experiment}: {e}")
+    print("Verified experiments:")
+    for molecule, verified_exps_by_chain in verified_exps_by_molecule.items():
+        print(f"  {molecule}:")
+        for chain, experiments in verified_exps_by_chain.items():
+            print(f"    {chain}:")
+            for experiment in experiments:
+                try:
+                    print(
+                        f"      {experiment.mutation.to_string()} with DDG {experiment.ddg}"
+                    )
+                except ValueError as e:
+                    print(f"Error printing experiment {experiment}: {e}")
 
-    # print("Suggested experiments:")
-    # for molecule, suggested_exps_by_chain in suggested_exps_by_molecule.items():
-    #     print(f"  {molecule}:")
-    #     for chain, experiments in suggested_exps_by_chain.items():
-    #         print(f"    {chain}:")
-    #         for experiment in experiments:
-    #             try:
-    #                 print(
-    #                     f"      {experiment.mutation.to_string()} with DDG {experiment.ddg}"
-    #                 )
-    #             except ValueError as e:
-    #                 print(f"Error printing experiment {experiment}: {e}")
+    print("Suggested experiments:")
+    for molecule, suggested_exps_by_chain in suggested_exps_by_molecule.items():
+        print(f"  {molecule}:")
+        for chain, experiments in suggested_exps_by_chain.items():
+            print(f"    {chain}:")
+            for experiment in experiments:
+                try:
+                    print(
+                        f"      {experiment.mutation.to_string()} with DDG {experiment.ddg}"
+                    )
+                except ValueError as e:
+                    print(f"Error printing experiment {experiment}: {e}")
 
 
 if __name__ == "__main__":
