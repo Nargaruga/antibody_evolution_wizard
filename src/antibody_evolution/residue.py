@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 
+from pymol import cmd
+
 
 # Map single letter amino acid codes to three letter codes
 RESIDUE_NAME_MAPPING = {
@@ -55,3 +57,22 @@ class Residue:
     def get_selection_str(self):
         """Get the PyMOL selection string for the residue."""
         return f"{self.molecule} and resi {self.id} and chain {self.chain}"
+
+    def is_valid(self) -> bool:
+        try:
+            one_to_three(self.name)
+        except ValueError:
+            print(f"Invalid residue code: {self.name}")
+            return False
+
+        cmd.select(
+            "temp",
+            f"byres ({self.molecule} and chain {self.chain} and resi {self.id}) and name CA",
+        )
+
+        if cmd.count_atoms("temp") <= 1:
+            return False
+
+        cmd.delete("temp")
+
+        return True

@@ -24,7 +24,6 @@ from antibody_evolution.mutation_evaluation import (
 from antibody_evolution.mutation_suggestions import (
     Suggestion,
     get_mutation_suggestions,
-    is_residue_valid,
 )
 from antibody_evolution.residue import Residue, one_to_three
 
@@ -239,7 +238,7 @@ class Evolution(Wizard):
 
         if self.models == []:
             print(
-                "No models selected. Please use the configuration wizard to download and select the desired models."
+                "No models selected. Please use the configuration wizard to download and activate the desired models."
             )
         else:
             print(f"Loaded models: {self.models}")
@@ -534,7 +533,7 @@ class Evolution(Wizard):
             return
 
         if not self.models:
-            self.extra_msg = "No models selected. Please use the configuration wizard to download and select the desired models."
+            self.extra_msg = "No models selected. Please use the configuration wizard to download and activate the desired models."
             print(self.extra_msg)
             self.update_input_state()
             return
@@ -558,11 +557,7 @@ class Evolution(Wizard):
 
         filtered_mutations = []
         for suggestion in annotated_mutations:
-            if is_residue_valid(
-                self.molecule,
-                self.chain_to_mutate,
-                suggestion.mutation.start_residue,
-            ):
+            if suggestion.mutation.start_residue.is_valid():
                 filtered_mutations.append(suggestion)
             else:
                 print(f"Filtered out mutation for invalid residue: {suggestion}")

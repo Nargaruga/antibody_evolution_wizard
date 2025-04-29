@@ -5,9 +5,7 @@ import subprocess
 from dataclasses import dataclass
 
 from .mutation import Mutation
-from .residue import Residue, one_to_three
-
-from pymol import cmd
+from .residue import Residue
 
 
 @dataclass
@@ -41,34 +39,12 @@ class Suggestion:
         )
 
 
-def is_residue_valid(molecule: str, chain: str, residue: Residue) -> bool:
-    try:
-        one_to_three(residue.name)
-    except ValueError:
-        print(f"Invalid residue code: {residue.name}")
-        return False
-
-    cmd.select(
-        "temp",
-        f"byres ({molecule} and chain {chain} and resi {residue.id}) and name CA",
-    )
-
-    if cmd.count_atoms("temp") <= 1:
-        return False
-
-    return True
-
-
 def filter_suggestions(suggestions: list[Suggestion]) -> list[Suggestion]:
     """Filter out suggestions on incomplete residues."""
 
     filtered_suggestions = []
     for suggestion in suggestions:
-        if is_residue_valid(
-            suggestion.mutation.start_residue.molecule,
-            suggestion.mutation.start_residue.chain,
-            suggestion.mutation.start_residue.id,
-        ):
+        if suggestion.mutation.start_residue.is_valid():
             filtered_suggestions.append(suggestion)
         else:
             print(f"Filtered out mutation for invalid residue: {suggestion}")
