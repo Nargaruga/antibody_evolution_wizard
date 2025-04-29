@@ -633,10 +633,13 @@ class Evolution(Wizard):
 
     def set_suggestion(self, mutation_str):
         """Set the selected mutation to apply."""
+
         suggestion = self.suggestions[mutation_str]
         self.selected_suggestion = suggestion
-        cmd.delete("to_mutate")
-        cmd.select("to_mutate", suggestion.mutation.start_residue.get_selection_str())
+
+        if "sele" in cmd.get_names("all"):
+            cmd.delete("sele")
+        cmd.select("sele", suggestion.mutation.start_residue.get_selection_str())
         self.update_input_state()
 
     def compute_binding_affinity(self):
@@ -702,11 +705,7 @@ class Evolution(Wizard):
             return
 
         # The mutation is applied to the last state
-        cmd.create(
-            "last_state",
-            self.molecule,
-            cmd.count_states(self.molecule),
-        )
+        cmd.create("last_state", self.molecule, cmd.count_states(self.molecule), 1)
 
         cmd.wizard("mutagenesis")
         cmd.do("refresh_wizard")

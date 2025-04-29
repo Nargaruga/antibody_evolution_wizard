@@ -75,7 +75,7 @@ def compute_ddg(
     pymol_instance.cmd.load(molecule_file_path, molecule)
 
     selection_string = (
-        f"{molecule} and chain {chain} and resi {mutation.start_residue.id}"
+        f"/{molecule}//{chain}/{mutation.start_residue.id}"
     )
     pymol_instance.cmd.select("tmp", selection_string)
 
