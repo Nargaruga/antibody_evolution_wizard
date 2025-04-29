@@ -11,7 +11,7 @@ import csv
 
 from pymol.wizard import Wizard
 from pymol.wizarding import WizardError
-from pymol import cmd
+from pymol import cmd, CmdException
 import pymol2
 
 import yaml
@@ -698,9 +698,16 @@ class Evolution(Wizard):
 
         cmd.wizard("mutagenesis")
         cmd.do("refresh_wizard")
-        cmd.get_wizard().do_select(
-            f"/last_state//{self.chain_to_mutate}/{self.selected_suggestion.mutation.start_residue.id}"
-        )
+        try:
+            cmd.get_wizard().do_select(
+                f"/last_state//{self.chain_to_mutate}/{self.selected_suggestion.mutation.start_residue.id}"
+            )
+        except CmdException as e:
+            # Not sure why this happens. A molecule that causes this is 3L5X
+            print(f"Failed to apply mutation due to error selecting residue: {e}")
+            cmd.delete("last_state")
+            cmd.set_wizard()
+            return
         cmd.get_wizard().set_mode(
             one_to_three(self.selected_suggestion.mutation.target_resn)
         )
