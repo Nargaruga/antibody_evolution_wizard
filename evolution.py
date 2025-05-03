@@ -71,6 +71,7 @@ class Evolution(Wizard):
         self.suggestions: dict[str, Suggestion] = {}
         self.suggestions_lock = threading.Lock()
         self.selected_suggestion = None
+        # TODO lock history
         self.history: list[HistoryEntry] = []
         self.populate_molecule_choices()
         self.load_models()
@@ -427,7 +428,7 @@ class Evolution(Wizard):
             )
 
     def attach_affinity_label(self, affinity, state):
-        """Attach a label with the binding affinity to the molecule."""
+        """Attach a label displaying the binding affinity to the molecule."""
 
         if self.molecule is None:
             print("Please select a molecule.")
@@ -435,7 +436,7 @@ class Evolution(Wizard):
 
         label_name = "big_label"
 
-        if not cmd.get_object_list(label_name):
+        if "big_label" in cmd.get_names():
             cmd.create(label_name, "none")
 
         cmd.remove(f"{label_name} and state {state}")
@@ -443,7 +444,7 @@ class Evolution(Wizard):
         cmd.pseudoatom(
             label_name,
             pos=(cmd.get_coords(self.molecule)[0] - [0, 30, 0]).tolist(),
-            label=f"Binding affinity: {affinity} kcal/mol",
+            label=f"Binding Free Energy: {affinity} kcal/mol",
             state=state,
         )
         cmd.set("label_size", 30, label_name)
@@ -680,7 +681,11 @@ class Evolution(Wizard):
                 print("Affinity update aborted.")
                 return
 
-            print(f"New affinity for state {cmd.get_state()}: {affinity} kcal/mol.")
+
+            last_affinity = self.history[-1].binding_affinity
+            self.extra_msg = f"New affinity for state {cmd.get_state()}: {affinity} kcal/mol.\nAffinity change: {affinity - last_affinity} kcal/mol."
+            print(self.extra_msg)
+
             self.attach_affinity_label(affinity, cmd.get_state())
             self.remove_task(WizardTask.COMPUTING_AFFINITY)
             self.update_input_state()
