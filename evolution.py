@@ -436,7 +436,7 @@ class Evolution(Wizard):
 
         label_name = "big_label"
 
-        if "big_label" in cmd.get_names():
+        if label_name not in cmd.get_names():
             cmd.create(label_name, "none")
 
         cmd.remove(f"{label_name} and state {state}")
@@ -681,9 +681,15 @@ class Evolution(Wizard):
                 print("Affinity update aborted.")
                 return
 
+            self.extra_msg = (
+                f"New affinity for state {cmd.get_state()}: {affinity} kcal/mol."
+            )
+            if len(self.history) > 0:
+                last_affinity = self.history[-1].binding_affinity
+                self.extra_msg += (
+                    f"\nAffinity change: {affinity - last_affinity} kcal/mol."
+                )
 
-            last_affinity = self.history[-1].binding_affinity
-            self.extra_msg = f"New affinity for state {cmd.get_state()}: {affinity} kcal/mol.\nAffinity change: {affinity - last_affinity} kcal/mol."
             print(self.extra_msg)
 
             self.attach_affinity_label(affinity, cmd.get_state())
