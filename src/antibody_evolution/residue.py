@@ -58,21 +58,24 @@ class Residue:
         """Get the PyMOL selection string for the residue."""
         return f"{self.molecule} and resi {self.id} and chain {self.chain}"
 
-    def is_valid(self) -> bool:
+    def is_valid(self, pymol_cmd=None) -> bool:
         try:
             one_to_three(self.name)
         except ValueError:
             print(f"Invalid residue code: {self.name}")
             return False
 
-        cmd.select(
+        if pymol_cmd is None:
+            pymol_cmd = cmd
+
+        pymol_cmd.select(
             "temp",
             f"byres ({self.molecule} and chain {self.chain} and resi {self.id}) and name CA",
         )
 
-        if cmd.count_atoms("temp") <= 1:
+        if pymol_cmd.count_atoms("temp") <= 1:
             return False
 
-        cmd.delete("temp")
+        pymol_cmd.delete("temp")
 
         return True
