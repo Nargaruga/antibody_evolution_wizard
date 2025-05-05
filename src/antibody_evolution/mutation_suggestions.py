@@ -64,6 +64,12 @@ def get_mutation_suggestions(
     if sequence == "":
         raise ValueError("Sequence cannot be empty.")
 
+    if len(sequence) > 1022:
+        # Efficient Evolution crashes with sequences longer than 1022 characters.
+        print("Warning: Sequence length exceeds 1022. Truncating to 1022.")
+        sequence = sequence[:1022]
+        ids = ids[:1022]
+
     if os.name == "nt":
         prefix = [
             "docker",
