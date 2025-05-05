@@ -32,6 +32,9 @@ def compute_affinity(
     :return the binding affinity, rounded to 2 decimal places
     :raises AffinityComputationError: if the Prodigy call fails or output is invalid
     """
+
+    print(f"Computing affinity betwen chains {antibody_chains} and {antigen_chains}")
+
     command = [
         "prodigy",
         molecule_file,
@@ -57,8 +60,32 @@ def compute_affinity(
 
     except subprocess.CalledProcessError as e:
         raise AffinityComputationError(
-            f"command {' '.join(command)} failed: {e.stderr}"
-        )
+            f"command {' '.join(command)} failed: {e}"
+        ) from e
+
+
+def apply_mutation(
+    obj: str,
+    chain: str,
+    mutation: Mutation,
+    pymol_cmd,
+):
+    """Apply the mutation to the given object in PyMOL."""
+
+    print(f"Applying mutation {mutation} to {obj}")
+    selection_string = f"/{obj}//{chain}/{mutation.start_residue.id}"
+    pymol_cmd.select("tmp", selection_string)
+
+    pymol_cmd.wizard("mutagenesis")
+    pymol_cmd.do("refresh_wizard")
+    pymol_cmd.get_wizard().do_select("tmp")
+
+    pymol_cmd.get_wizard().set_mode(one_to_three(mutation.target_resn))
+    pymol_cmd.frame(1)
+    pymol_cmd.get_wizard().apply()
+    pymol_cmd.set_wizard()
+
+    pymol_cmd.delete("tmp")
 
 
 def compute_ddg(
@@ -68,49 +95,44 @@ def compute_ddg(
     mutation: Mutation,
     antibody_chains,
     partner_chains,
-    pymol_instance,
+    pymol_cmd,
 ) -> float:
     """Compute the mutation's DDG and return it."""
-    molecule="prova"
-    pymol_instance.cmd.load(molecule_file_path, molecule)
 
-    selection_string = (
-        f"/{molecule}//{chain}/{mutation.start_residue.id}"
-    )
-    pymol_instance.cmd.select("tmp", selection_string)
-
-    pymol_instance.cmd.wizard("mutagenesis")
-    pymol_instance.cmd.do("refresh_wizard")
+    molecule = "to_mutate"
+    pymol_cmd.load(molecule_file_path, molecule)
     try:
-        pymol_instance.cmd.get_wizard().do_select("tmp")
+        apply_mutation(
+            molecule,
+            chain,
+            mutation,
+            pymol_cmd,
+        )
     except CmdException as e:
         # Not sure why this happens. A molecule that causes this is 3L5X
-        msg = f"Skipping mutation {mutation} due to error selecting residue: {e}"
-        raise DDGComputationError(msg)
-
-    pymol_instance.cmd.get_wizard().set_mode(one_to_three(mutation.target_resn))
-    pymol_instance.cmd.frame(1)
-    pymol_instance.cmd.get_wizard().apply()
-    pymol_instance.cmd.set_wizard()
+        raise DDGComputationError(
+            f"Skipping mutation {mutation} due to error applying mutation."
+        ) from e
 
     mutated_molecule_file_handle, mutated_molecule_file_path = tempfile.mkstemp(
         suffix=".pdb"
     )
-    pymol_instance.cmd.save(mutated_molecule_file_path, molecule)
+    pymol_cmd.save(mutated_molecule_file_path, molecule)
+    pymol_cmd.delete(molecule)
+
     try:
         mutated_affinity = compute_affinity(
             mutated_molecule_file_path,
             antibody_chains,
             partner_chains,
         )
+        print(f"New affinity for {mutation} is {mutated_affinity}")
     except AffinityComputationError as e:
-        msg = f"Skipping mutation {mutation} due to error computing new affinity: {e}"
-        raise DDGComputationError(msg)
+        raise DDGComputationError(
+            f"Skipping mutation {mutation} due to error computing new affinity: {e}"
+        ) from e
     finally:
         os.close(mutated_molecule_file_handle)
         os.remove(mutated_molecule_file_path)
-
-    pymol_instance.cmd.delete("tmp")
-    pymol_instance.cmd.delete("tmp_molecule")
 
     return round(mutated_affinity - original_affinity, 2)

@@ -17,6 +17,7 @@ import pymol2
 import yaml
 
 from antibody_evolution.mutation_evaluation import (
+    apply_mutation,
     compute_affinity,
     compute_ddg,
     AffinityComputationError,
@@ -718,24 +719,19 @@ class Evolution(Wizard):
         # The mutation is applied to the last state
         cmd.create("last_state", self.molecule, cmd.count_states(self.molecule), 1)
 
-        cmd.wizard("mutagenesis")
-        cmd.do("refresh_wizard")
         try:
-            cmd.get_wizard().do_select(
-                f"/last_state//{self.chain_to_mutate}/{self.selected_suggestion.mutation.start_residue.id}"
+            apply_mutation(
+                "last_state",
+                self.chain_to_mutate,
+                self.selected_suggestion.mutation,
+                cmd,
             )
         except CmdException as e:
             # Not sure why this happens. A molecule that causes this is 3L5X
-            print(f"Failed to apply mutation due to error selecting residue: {e}")
+            print(f"Failed to apply mutation: {e}")
             cmd.delete("last_state")
             cmd.set_wizard()
             return
-        cmd.get_wizard().set_mode(
-            one_to_three(self.selected_suggestion.mutation.target_resn)
-        )
-        cmd.frame(1)
-        cmd.get_wizard().apply()
-        cmd.set_wizard()
 
         cmd.join_states(self.molecule, "last_state", mode=0)
         cmd.delete("last_state")
@@ -755,7 +751,7 @@ class Evolution(Wizard):
         tmp_file_handle, tmp_file_path = tempfile.mkstemp(
             suffix=".pdb",
         )
-        cmd.save(tmp_file_path, self.molecule)
+        cmd.save(tmp_file_path, self.molecule, cmd.count_states(self.molecule))
         affinity = compute_affinity(
             tmp_file_path, self.antibody_chains, self.antigen_chains
         )
