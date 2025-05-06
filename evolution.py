@@ -6,8 +6,6 @@ import threading
 from dataclasses import dataclass
 import tempfile
 import pkgutil
-import csv
-
 
 from pymol.wizard import Wizard
 from pymol.wizarding import WizardError
@@ -21,12 +19,13 @@ from antibody_evolution.mutation_evaluation import (
     compute_affinity,
     compute_ddg,
     AffinityComputationError,
+    DDGComputationError,
 )
 from antibody_evolution.mutation_suggestions import (
     Suggestion,
     get_mutation_suggestions,
 )
-from antibody_evolution.residue import Residue, one_to_three
+from antibody_evolution.residue import Residue
 
 
 @dataclass
@@ -63,6 +62,7 @@ class Evolution(Wizard):
         self.state_lock = threading.Lock()
         self.tasks = []
         self.tasks_lock = threading.Lock()
+        self.affinity_prompt = None
         self.extra_msg = ""
         self.models = ["esm1b"]
         self.molecule = None
@@ -108,6 +108,9 @@ class Evolution(Wizard):
                 prompt.append("Finding the best mutation, please wait...")
             elif task == WizardTask.COMPUTING_AFFINITY:
                 prompt.append("Computing binding affinity, please wait...")
+
+        if self.affinity_prompt:
+            prompt.extend(self.affinity_prompt.split("\n"))
 
         if self.extra_msg:
             prompt.append(self.extra_msg)
@@ -506,62 +509,62 @@ class Evolution(Wizard):
         worker_thread = threading.Thread(target=aux)
         worker_thread.start()
 
-    def serialize_suggestions(self):
-        """Serialize the suggestions to a CSV file."""
+    # def serialize_suggestions(self):
+    #     """Serialize the suggestions to a CSV file."""
 
-        if self.molecule is None:
-            print("Please select a molecule.")
-            return
+    #     if self.molecule is None:
+    #         print("Please select a molecule.")
+    #         return
 
-        if self.suggestions is None:
-            print("No suggestions available.")
-            return
+    #     if self.suggestions is None:
+    #         print("No suggestions available.")
+    #         return
 
-        molecule_file_handle, molecule_file_path = tempfile.mkstemp(suffix=".pdb")
-        # TODO use thread to avoid blocking gui
-        cmd.save(molecule_file_path, self.molecule)
-        try:
-            original_affinity = compute_affinity(
-                molecule_file_path, self.antibody_chains, self.antigen_chains
-            )
-        except AffinityComputationError as e:
-            print(f"Error computing affinity: {e}")
-            os.close(molecule_file_handle)
-            os.remove(molecule_file_path)
-            return
+    #     molecule_file_handle, molecule_file_path = tempfile.mkstemp(suffix=".pdb")
+    #     # TODO use thread to avoid blocking gui
+    #     cmd.save(molecule_file_path, self.molecule)
+    #     try:
+    #         original_affinity = compute_affinity(
+    #             molecule_file_path, self.antibody_chains, self.antigen_chains
+    #         )
+    #     except AffinityComputationError as e:
+    #         print(f"Error computing affinity: {e}")
+    #         os.close(molecule_file_handle)
+    #         os.remove(molecule_file_path)
+    #         return
 
-        with pymol2.PyMOL() as bg_pymol:
-            suggestions_file_path = os.path.join(
-                os.path.expanduser("~"), f"suggestions_{self.chain_to_mutate}.csv"
-            )
-            os.remove(suggestions_file_path) if os.path.exists(
-                suggestions_file_path
-            ) else None
-            with open(
-                suggestions_file_path,
-                "w",
-                newline="",
-            ) as csv_file:
-                writer = csv.writer(csv_file)
-                writer.writerow(["Mutation", "Occurrences", "DDG"])
-                for suggestion in self.suggestions.values():
-                    ddg = compute_ddg(
-                        molecule_file_path,
-                        self.chain_to_mutate,
-                        original_affinity,
-                        suggestion.mutation,
-                        self.antibody_chains,
-                        self.antigen_chains,
-                        bg_pymol,
-                    )
-                    writer.writerow(
-                        [suggestion.mutation.to_string(), suggestion.occurrences, ddg]
-                    )
+    #     with pymol2.PyMOL() as bg_pymol:
+    #         suggestions_file_path = os.path.join(
+    #             os.path.expanduser("~"), f"suggestions_{self.chain_to_mutate}.csv"
+    #         )
+    #         os.remove(suggestions_file_path) if os.path.exists(
+    #             suggestions_file_path
+    #         ) else None
+    #         with open(
+    #             suggestions_file_path,
+    #             "w",
+    #             newline="",
+    #         ) as csv_file:
+    #             writer = csv.writer(csv_file)
+    #             writer.writerow(["Mutation", "Occurrences", "DDG"])
+    #             for suggestion in self.suggestions.values():
+    #                 ddg = compute_ddg(
+    #                     molecule_file_path,
+    #                     self.chain_to_mutate,
+    #                     original_affinity,
+    #                     suggestion.mutation,
+    #                     self.antibody_chains,
+    #                     self.antigen_chains,
+    #                     bg_pymol,
+    #                 )
+    #                 writer.writerow(
+    #                     [suggestion.mutation.to_string(), suggestion.occurrences, ddg]
+    #                 )
 
-                print(f"Suggestions saved to {csv_file}.")
+    #             print(f"Suggestions saved to {csv_file}.")
 
-        os.close(molecule_file_handle)
-        os.remove(molecule_file_path)
+    #     os.close(molecule_file_handle)
+    #     os.remove(molecule_file_path)
 
     def suggest_mutations(self):
         """Generate mutation suggestions."""
@@ -682,16 +685,18 @@ class Evolution(Wizard):
                 print("Affinity update aborted.")
                 return
 
-            self.extra_msg = (
+            self.affinity_prompt = (
                 f"New affinity for state {cmd.get_state()}: {affinity} kcal/mol."
             )
-            if len(self.history) > 0:
+            if len(self.history) == 0:
+                self.record_history(affinity)
+            else:
                 last_affinity = self.history[-1].binding_affinity
-                self.extra_msg += (
-                    f"\nAffinity change: {affinity - last_affinity} kcal/mol."
+                self.affinity_prompt += (
+                    f"\nAffinity change: {round(affinity - last_affinity, 2)} kcal/mol."
                 )
 
-            print(self.extra_msg)
+            print(self.affinity_prompt)
 
             self.attach_affinity_label(affinity, cmd.get_state())
             self.remove_task(WizardTask.COMPUTING_AFFINITY)
@@ -791,15 +796,21 @@ class Evolution(Wizard):
             best_suggestion = None
             with pymol2.PyMOL() as bg_pymol, self.suggestions_lock:
                 for mutation_str, suggestion in self.suggestions.items():
-                    ddg = compute_ddg(
-                        molecule_file_path,
-                        self.chain_to_mutate,
-                        original_affinity,
-                        suggestion.mutation,
-                        self.antibody_chains,
-                        self.antigen_chains,
-                        bg_pymol,
-                    )
+                    try:
+                        ddg = compute_ddg(
+                            molecule_file_path,
+                            self.chain_to_mutate,
+                            original_affinity,
+                            suggestion.mutation,
+                            self.antibody_chains,
+                            self.antigen_chains,
+                            bg_pymol.cmd,
+                        )
+                    except DDGComputationError as e:
+                        print(
+                            f"DDG computation for {mutation_str} failed, skipping: {e}"
+                        )
+                        continue
 
                     print(f"Computed ddG for {mutation_str}: {ddg}")
                     if ddg < best_ddg:
