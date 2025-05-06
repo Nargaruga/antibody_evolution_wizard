@@ -36,6 +36,13 @@ def one_to_three(oneletter):
 
     return RESIDUE_NAME_MAPPING[oneletter]
 
+def resn_exists(resn):
+    """Check if a residue name exists in the mapping."""
+    return resn in RESIDUE_NAME_MAPPING.values()
+
+def oneletter_exists(oneletter):
+    """Check if a one-letter code exists in the mapping."""
+    return oneletter in RESIDUE_NAME_MAPPING.keys()
 
 @dataclass
 class Residue:
@@ -59,10 +66,8 @@ class Residue:
         return f"{self.molecule} and resi {self.id} and chain {self.chain}"
 
     def is_valid(self, pymol_cmd=None) -> bool:
-        try:
-            one_to_three(self.name)
-        except ValueError:
-            print(f"Invalid residue code: {self.name}")
+        if not oneletter_exists(self.name):
+            print(f"Invalid residue name: {self.name}")
             return False
 
         if pymol_cmd is None:
