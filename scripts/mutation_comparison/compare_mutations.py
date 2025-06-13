@@ -119,7 +119,7 @@ def annotate_experiment(
                 experiment.mutation,
                 [chain],
                 experiment.partner_chains,
-                pymol_instance,
+                pymol_instance.cmd,
             )
 
         print(f"DDG for {experiment.mutation.to_string()} is {ddg}")
