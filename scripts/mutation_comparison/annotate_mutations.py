@@ -8,7 +8,6 @@ from dataclasses import dataclass
 import tempfile
 
 from pymol import cmd
-import pymol2
 
 from antibody_evolution.mutation_evaluation import (
     compute_affinity,
@@ -20,7 +19,7 @@ from antibody_evolution.mutation_suggestions import (
     get_mutation_suggestions,
 )
 from antibody_evolution.mutation import Mutation
-from antibody_evolution.residue import Residue
+from antibody_evolution.residue import Residue, oneletter_exists
 
 
 @dataclass
@@ -104,6 +103,63 @@ def parse_experiments(file_path):
             experiments[molecule][chain].append(experiment)
 
     return experiments
+
+
+def annotate_experiments(
+    experiments_by_molecule: dict[str, dict[str, list[Experiment]]],
+) -> dict[str, dict[str, list[Experiment]]]:
+    """Annotate experiments with DDG values."""
+
+    for molecule, experiments_by_chain in experiments_by_molecule.items():
+        cmd.delete("all")
+        cmd.fetch(molecule)
+
+        molecule_file_handle, molecule_file_path = tempfile.mkstemp(suffix=".pdb")
+        cmd.save(molecule_file_path, molecule)
+
+        for chain, experiments in experiments_by_chain.items():
+            if len(experiments) == 0:
+                continue
+
+            # We assume partner chains are the same for all experiments in the same chain
+            partner_chains = experiments[0].partner_chains
+
+            try:
+                original_affinity = compute_affinity(
+                    molecule_file_path, [chain], partner_chains
+                )
+            except AffinityComputationError as e:
+                msg = f"Skipping chain {chain} due to error computing original affinity: {e}"
+                print(msg)
+                for experiment in experiments:
+                    experiment.ddg = None
+                    experiment.note = msg
+                continue
+
+            for experiment in experiments:
+                if experiment.mutation.start_residue.is_valid(cmd) and oneletter_exists(
+                    experiment.mutation.target_resn
+                ):
+                    print(
+                        f"Annotating {experiment.mutation.to_string()} in {molecule} chain {chain}..."
+                    )
+                    experiment = annotate_experiment(
+                        molecule_file_path,
+                        chain,
+                        original_affinity,
+                        experiment,
+                        cmd,
+                    )
+                else:
+                    msg = f"Filtered out mutation for invalid residue: {experiment}"
+                    print(msg)
+                    experiment.ddg = None
+                    experiment.note = msg
+
+        os.close(molecule_file_handle)
+        os.remove(molecule_file_path)
+
+    return experiments_by_molecule
 
 
 def annotate_experiment(
@@ -293,8 +349,16 @@ def main():
     print(f"Parsing verified experiments from {file_path}")
     verified_exps_by_molecule = parse_experiments(file_path)
 
-    print("Getting suggestions from Efficient Evolution...")
-    suggest_experiments(verified_exps_by_molecule, "annotated_verified_experiments.csv")
+    print("Annotating experiments...")
+    annotated_verified_exps_by_molecule = annotate_experiments(
+        verified_exps_by_molecule
+    )
+    serialize_experiments(
+        annotated_verified_exps_by_molecule, "annotated_verified_experiments.csv"
+    )
+
+    # print("Getting suggestions from Efficient Evolution...")
+    # suggest_experiments(verified_exps_by_molecule, "annotated_verified_experiments.csv")
 
 
 if __name__ == "__main__":
