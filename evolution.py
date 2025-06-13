@@ -6,6 +6,7 @@ import threading
 from dataclasses import dataclass
 import tempfile
 import pkgutil
+import csv
 
 from pymol.wizard import Wizard
 from pymol.wizarding import WizardError
@@ -565,7 +566,7 @@ class Evolution(Wizard):
     #                     suggestion.mutation,
     #                     self.antibody_chains,
     #                     self.antigen_chains,
-    #                     bg_pymol,
+    #                     bg_pymol.cmd,
     #                 )
     #                 writer.writerow(
     #                     [suggestion.mutation.to_string(), suggestion.occurrences, ddg]
