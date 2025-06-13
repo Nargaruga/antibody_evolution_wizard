@@ -76,6 +76,7 @@ class Evolution(Wizard):
         self.history: list[HistoryEntry] = []
         self.populate_molecule_choices()
         self.load_models()
+        self.record_history(0.0)
 
     def get_prompt(self):  # type: ignore
         """Return the prompt for the current state of the wizard."""
@@ -455,9 +456,17 @@ class Evolution(Wizard):
         cmd.set("label_color", "yellow", label_name)
         cmd.set("float_labels", 1, label_name)
 
-    def record_history(self, affinity):
-        self.history.append(HistoryEntry(affinity, list(self.suggestions.values())))
-        print(f"Recorded history entry {len(self.history)}.")
+    def record_history(self, affinity, state=None):
+        if state is None or state > len(self.history):
+            self.history.append(HistoryEntry(affinity, list(self.suggestions.values())))
+            print(f"Recorded history entry {len(self.history)}.")
+        else:
+            self.history[state - 1] = HistoryEntry(
+                affinity, list(self.suggestions.values())
+            )
+            print(f"Updated history entry {state}.")
+
+        print(self.history)
 
     def undo(self):
         """Undo the last mutation."""
@@ -467,7 +476,7 @@ class Evolution(Wizard):
             return
 
         if len(self.history) > 1:
-            self.history.pop()
+            to_remove = self.history.pop()
             print(f"Removed history entry {len(self.history) + 1}.")
             self.binding_affinity = self.history[-1].binding_affinity
             self.suggestions = {
@@ -478,8 +487,9 @@ class Evolution(Wizard):
             cmd.delete_states(self.molecule, f"{cmd.count_states(self.molecule)}")
             if "big_label" in cmd.get_names():
                 cmd.delete_states("big_label", f"{cmd.count_states('big_label')}")
-            self.populate_mutation_choices(list(self.suggestions.values()))
+            self.populate_mutation_choices(list(to_remove.suggestions))
             self.highlight_mutations()
+            cmd.frame(cmd.count_states(self.molecule))
             print("Undid last mutation")
 
             self.update_input_state()
@@ -610,9 +620,6 @@ class Evolution(Wizard):
         self.populate_mutation_choices(filtered_mutations)
         self.highlight_mutations()
 
-        if self.history == []:
-            self.record_history(0.0)
-
         # self.serialize_suggestions()  # TODO temporary
 
         print("Select a mutation.")
@@ -688,17 +695,18 @@ class Evolution(Wizard):
             self.affinity_prompt = (
                 f"New affinity for state {cmd.get_state()}: {affinity} kcal/mol."
             )
-            if len(self.history) == 0:
-                self.record_history(affinity)
-            else:
-                last_affinity = self.history[-1].binding_affinity
+            print(self.affinity_prompt)
+
+            previous_state = cmd.get_state() - 1
+            if previous_state > 1 and previous_state - 1 < len(self.history):
+                last_affinity = self.history[previous_state - 1].binding_affinity
                 self.affinity_prompt += (
                     f"\nAffinity change: {round(affinity - last_affinity, 2)} kcal/mol."
                 )
 
-            print(self.affinity_prompt)
-
+            self.history[cmd.get_state() - 1].binding_affinity = affinity
             self.attach_affinity_label(affinity, cmd.get_state())
+
             self.remove_task(WizardTask.COMPUTING_AFFINITY)
             self.update_input_state()
 
@@ -744,6 +752,10 @@ class Evolution(Wizard):
 
         print(f"Applied mutation {self.selected_suggestion.mutation.to_string()}.")
 
+        # Temporary affinity, just for saving an entry with the mutations before deleting the applied one
+        # TODO: i really need to rewrite history handling
+        self.record_history(0.0, cmd.get_state())
+
         # Remove the applied mutation from the list of suggestions
         del self.suggestions[self.selected_suggestion.mutation.to_string()]
         self.selected_suggestion = None
@@ -751,21 +763,7 @@ class Evolution(Wizard):
 
         cmd.label(f"{self.molecule}", "''")
         self.highlight_mutations()
-
-        # Record the new binding affinity
-        tmp_file_handle, tmp_file_path = tempfile.mkstemp(
-            suffix=".pdb",
-        )
-        cmd.save(tmp_file_path, self.molecule, cmd.count_states(self.molecule))
-        affinity = compute_affinity(
-            tmp_file_path, self.antibody_chains, self.antigen_chains
-        )
-        os.close(tmp_file_handle)
-        os.remove(tmp_file_path)
-
-        self.record_history(affinity)
-        self.attach_affinity_label(affinity, cmd.count_states(self.molecule))
-
+        self.update_binding_affinity()
         self.update_input_state()
 
     def select_best_mutation(self):
