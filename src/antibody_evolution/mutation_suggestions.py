@@ -8,6 +8,10 @@ from .mutation import Mutation
 from .residue import Residue
 
 
+class MutationSuggestionError(Exception):
+    pass
+
+
 @dataclass
 class Suggestion:
     """A suggestion for a mutation to apply to an antibody,
@@ -88,17 +92,24 @@ def get_mutation_suggestions(
         prefix = ["conda", "run", "-n", "efficient-evolution", "recommend"]
 
     print(f"Running inference with models {models}")
-    res = subprocess.run(
-        prefix
-        + [
-            sequence,
-            "--model-names",
-        ]
-        + models,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        res = subprocess.run(
+            prefix
+            + [
+                sequence,
+                "--model-names",
+            ]
+            + models,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as e:
+        msg = "failed to run Efficient Evolution."
+        if os.name == "nt":
+            msg += " Is Docker running?"
+
+        raise MutationSuggestionError(msg)
 
     suggestions = []
     for line in res.stdout.strip().splitlines():
