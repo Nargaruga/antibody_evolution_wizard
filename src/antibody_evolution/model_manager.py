@@ -55,10 +55,23 @@ def download_model(model: str):
             continue_flag = "-Resume"
         else:
             print(
-                f"Resuming downloads is only supported in PowerShell version {powershell_min_version} or higher."
+                f"Note that resuming downloads is only supported in PowerShell version {powershell_min_version} or higher."
             )
+            print("Starting download from scratch.")
     elif os.name == "posix":
         continue_flag = "-c"
+
+    print(f"Downloading {model}...")
+
+    checkpoints_dir = os.path.join(
+        os.path.expanduser("~"),
+        ".cache",
+        "torch",
+        "hub",
+        "checkpoints",
+    )
+
+    os.makedirs(checkpoints_dir, exist_ok=True)
 
     output = subprocess.run(
         (get_powershell_prefix() if os.name == "nt" else [])
@@ -68,11 +81,7 @@ def download_model(model: str):
             f"https://dl.fbaipublicfiles.com/fair-esm/models/{map_model_name(model)}.pt",
             ("-OutFile" if os.name == "nt" else "-P"),
             os.path.join(
-                os.path.expanduser("~"),
-                ".cache",
-                "torch",
-                "hub",
-                "checkpoints",
+                checkpoints_dir,
                 f"{map_model_name(model)}.pt",
             ),
         ],
